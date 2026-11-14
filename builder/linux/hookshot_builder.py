@@ -1251,12 +1251,18 @@ class Builder(tk.Tk):
                             hasattr(self, "dlss") and bool(self.dlss.get()) != folder_has_dlss(expanded))
         if self.mode == "up-to-date" and dlss_changed:
             self.mode = "update-game"
-        # (LaküenRecomp) a game older than this builder whose folder keeps no game files to update from: Update builds it
-        # again from the .nup or folders chosen below, instead of Play saying the old version is the latest
-        target_now = linux_update.update_target(self.latest, self.tools, self.switching())
-        if (self.mode == "up-to-date" and game and target_now and game != target_now and not kept
-                and not linux_update.older_version(target_now, game)):
+        # (LaküenRecomp) The game against this builder itself, whatever the Track: a game built by another version (an older
+        # release, or another test build, which are on the nightly track while the Track menu says Release) that is not newer
+        # than this builder gets Update, a build again with this builder from the game files chosen below. Play said the old
+        # version was the latest, and a new builder never brought the game up to date
+        if (self.mode == "up-to-date" and game and self.tools and game != self.tools
+                and not linux_update.older_version(self.tools, game)):
             self.mode = "rebuild"
+        # (and a game this very builder made is played: a Track menu left on Release under a test build offered to take it
+        # back to the older release after every build)
+        if self.mode == "update-game" and game and game == self.tools and not dlss_changed and \
+                linux_update.older_version(linux_update.update_target(self.latest, self.tools, self.switching()), game):
+            self.mode = "up-to-date"
         button = self.build_button
         if button is None:
             return
@@ -1281,8 +1287,8 @@ class Builder(tk.Tk):
             self.status.set(APP_NAME + " %s is available. Your game is %s. Update downloads only what changed, then compiles what changed."
                             % (shown_version(target), shown_version(game)))
         elif self.mode == "rebuild":
-            self.status.set(APP_NAME + " %s is available. Your game is %s. Update builds it again from your game files above "
-                            "(your saves and settings stay)." % (shown_version(target), shown_version(game)))
+            self.status.set("This builder is %s, your game was built with %s. Update builds it again with this builder from "
+                            "your game files above (your saves and settings stay)." % (shown_version(self.tools), shown_version(game)))
         elif self.mode == "up-to-date" and linux_update.older_version(target, game):
             self.status.set("Your game is %s, newer than this builder's update target %s. Play keeps this version; "
                             "choose another update track to change versions." % (game, target))

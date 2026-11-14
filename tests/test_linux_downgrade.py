@@ -134,6 +134,22 @@ class Admission(unittest.TestCase):
         self.assertEqual(app.mode, "up-to-date")
         self.assertEqual(events, [])
 
+    def test_test_builder_on_the_release_track_still_says_update(self):
+        """(LaküenRecomp) A test build (nightly track) with the Track menu on Release, the release's game in the folder,
+        its files kept or not: Update, not Play with the release called the latest"""
+        for kept in (False, True):
+            app, events = handlers(False)
+            app.tools, app.latest, app.switching = "v2.1.0-7-g90cfea86", "v2.1.0", lambda: True
+            with mock.patch.object(linux_update, "game_version", return_value=("v2.1.0", kept)):
+                app.apply_mode()
+            self.assertEqual(app.mode, "rebuild")
+            self.assertEqual(app.build_button.config["text"], "Update")
+            self.assertIn("This builder is v2.1.0-7-g90cfea86", app.status.get())
+            with mock.patch.object(linux_update, "game_version", return_value=("v2.1.0-7-g90cfea86", kept)):
+                app.apply_mode()
+            self.assertEqual(app.mode, "up-to-date")
+            self.assertEqual(events, [])
+
     def test_dlss_rebuild_cannot_bypass_downgrade_confirmation(self):
         app, events = handlers(False)
         app.dlss_toggled = True
