@@ -1340,7 +1340,7 @@ Row rows[] = {
      "Records the game's frames on several threads (faster on most PCs). Off, to see whether a white haze or a scene too bright "
      "goes with it. Applies after a restart.", nullptr, true, true},
     {TAB_GRAPHICS, "Mark a visual problem", &opts.mark, 0, 1, 1, tx_mark,
-     "Where something looks wrong (too bright, white haze, black or missing textures): change this once. The log notes the "
+     "Where something looks wrong (too bright, white haze, black or missing textures): change this once (a bookmark: one press, one mark). The log notes the "
      "moment and what the game did just before it, for the master log and the report. With the Effect finder on, also the "
      "passes the GPU drew most.", nullptr, false, true},
     // (the rows to change when something is wrong, or on a card short of memory: last)
@@ -4994,7 +4994,12 @@ static void lakuen_tick() {
     playtime_tick();
     diag_tick();
     static int seen = opts.mark;
-    if (opts.mark != seen) seen = opts.mark, diag_mark(++marks_made);
+    static std::chrono::steady_clock::time_point last_mark{};
+    if (opts.mark != seen) {   // (one mark each 2 s at most: a held key turned it 80 times)
+        seen = opts.mark;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_mark >= std::chrono::seconds(2)) last_mark = now, diag_mark(++marks_made);
+    }
     static int seen_report = opts.report;
     if (opts.report != seen_report) {
         seen_report = opts.report;
