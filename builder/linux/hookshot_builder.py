@@ -661,9 +661,10 @@ class Builder(tk.Tk):
         self.source_picked = False
         self.dlss_toggled = False
         self.tools = linux_update.tools_tag(linux_update.running_root() or ROOT)
-        # (the update track: the one chosen in the Track menu, saved; by default these tools' own)
-        own = linux_update.track_of(self.tools)
-        self.track = tk.StringVar(value=TRACK_NAMES[self.cfg.get("track") if self.cfg.get("track") in linux_update.TRACKS else own])
+        # (LaküenRecomp: releases only, no track to choose: Update shows when a newer release is out, or when the game is older
+        # than this builder. LAKUEN_TRACK=rc or nightly, for development, follows another track)
+        dev_track = os.environ.get("LAKUEN_TRACK", "")
+        self.track = tk.StringVar(value=TRACK_NAMES[dev_track if dev_track in linux_update.TRACKS else "release"])
         self.status = tk.StringVar()
         self.kind = tk.StringVar(value=self.cfg.get("kind", "nup"))
         self.nup = tk.StringVar(value=self.cfg.get("nup", ""))
@@ -1049,15 +1050,7 @@ class Builder(tk.Tk):
 
         options = ttk.Frame(f)
         options.grid(row=9, column=0, sticky="we", pady=(px(22), 0))
-        # (the update track: Release, Release candidate or Nightly. The builder updates from it; saved once chosen)
-        tracks = ttk.Frame(f)
-        tracks.grid(row=9, column=2, sticky="nwe", pady=(px(22), 0))
-        tracks.columnconfigure(0, weight=1)
-        self.section(tracks, "Update track", 0, top=0)
-        track = ttk.Combobox(tracks, textvariable=self.track, values=list(TRACK_NAMES.values()), state="readonly", font="HsNote",
-                             cursor="hand2")
-        track.grid(row=1, column=0, sticky="we")
-        track.bind("<<ComboboxSelected>>", self.on_track_changed)
+        # (LaküenRecomp: no Update track menu: releases only, the button says Update when there is one)
         ttk.Checkbutton(options, text="Prepare shaders now", variable=self.prepare, cursor="hand2").pack(anchor="w")
         ttk.Label(options, text="A few minutes at the end of the build. Unticked, the game prepares them at its first start, "
                   "behind a black window.", style="Small.TLabel", wraplength=px(540)).pack(anchor="w", padx=(px(26), 0), pady=(px(2), 0))
