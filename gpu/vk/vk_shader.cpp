@@ -33,6 +33,7 @@
 #include "shader_recompiler/backend/spirv/mma_layout.h"
 #include "shader_recompiler/ir_opt/passes.h"
 #include "shader_recompiler/ir_opt/fragment_output_guard.h"
+#include "shader_recompiler/ir_opt/lakuen_fog_brightness.h"   // (LaküenRecomp: the Fog density and Brightness rows)
 #include "shader_recompiler/ir_opt/scene_tonemap_pass.h"
 #include "shader_recompiler/backend/bindings.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
@@ -1014,6 +1015,21 @@ void written_types(const Code* fs, const uint8_t color_types[8], uint8_t out[8])
 /// (hookshot) Whether this fragment stage's program is to have PsychoV35 for its scene tone map (scene_tonemap_pass.h): a scene
 /// mapping program while the Tone mapper row asks for it. Its own key, so the row's change translates only these programs
 bool scene_tonemap_for(const Code* fs) { return fs && fs->scene_fit && scene_tonemap_on(); }
+// (LaküenRecomp) The Fog density and Brightness rows (hookshot_options.ini fog_density, brightness: percent, read at the start;
+// 100: the game's own, no edit), lakuen_fog_brightness.h; in the program cache's stamp, so a change translates the programs again
+float fog_factor() {
+    static const float f = std::clamp(menu_file_int("fog_density", 100), 10, 100) / 100.0f;
+    return f;
+}
+float brightness_factor() {
+    static const float f = std::clamp(menu_file_int("brightness", 100), 40, 100) / 100.0f;
+    return f;
+}
+void fog_brightness(Shader::IR::Program& program, uint64_t key) {
+    if (const size_t n = Shader::Optimization::ApplyFogBrightness(program, fog_factor(), brightness_factor()))
+        logf("vk: %s row: program %016llx, %zu edits (%.0f%%)", program.stage == Shader::Stage::Compute ? "Fog density" : "Brightness",
+             (unsigned long long)key, n, 100.0 * (program.stage == Shader::Stage::Compute ? fog_factor() : brightness_factor()));
+}
 uint64_t graphics_key(const Code& vs, const Code* fs, const uint32_t vattr[16], const uint8_t color_types[8],
                       bool tonemap = false) {
     uint64_t key = vs.key ^ (fs ? fs->key * 31 : 0);
@@ -1219,6 +1235,15 @@ uint64_t translator_stamp() {
     // without it, nor one made with RX_VK_NATIVE_FADD=0's loop wanted back once it is native again)
     const uint32_t float_add = profile().support_float32_atomic_add ? 1u : 0u;
     add(&float_add, sizeof float_add);
+    {   // (LaküenRecomp: the Fog density and Brightness rows change the fog and final passes' translation; 100 % adds nothing,
+        // so a cache made before the rows stays good)
+        const float f = fog_factor(), b = brightness_factor();
+        if (f != 1.0f || b != 1.0f) {
+            add("lakuen-fog", 10);
+            add(&f, sizeof f);
+            add(&b, sizeof b);
+        }
+    }
     // (RX_VK_GP_, not RX_VK_GP: that took RX_VK_GPL with it, which changes no translation, and switching the stage libraries on
     // threw the whole program cache away. What the libraries are good for is the prepare's second stamp, vk_draw.cpp warmed_stamp)
     // (and every other switch the translation reads: the storage buffer pass's (RX_VK_NO_CBUF_LOAD_RULE, RX_VK_PTR_SPLIT_FALLBACK,
@@ -1279,6 +1304,7 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
             } reset_table;
             auto t = translate(env, false);
             questions += env.texture_questions;
+            fog_brightness(t->program, csc->key);
             Shader::RuntimeInfo rt{};
             dump_ir(p, "compute", t->program);   // (before the SPIR-V: the programs it fails on are the ones to read)
             if (getenv("RX_VK_IR"))
@@ -1336,6 +1362,7 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
                 Env fs_env{s, *fsc, Shader::Stage::Fragment};
                 fs = translate(fs_env, true);
                 questions += fs_env.texture_questions;
+                fog_brightness(fs->program, fsc->key);
             }
             Shader::RuntimeInfo vrt{};
             Shader::RuntimeInfo frt{};
@@ -1599,6 +1626,7 @@ void translate_mesh_into(Program& p, const NvnState& s, const Code* task, const 
             Env fenv{s, *fsc, Shader::Stage::Fragment};
             auto fs = translate(fenv, true);
             questions += fenv.texture_questions;
+            fog_brightness(fs->program, fsc->key);
             Shader::RuntimeInfo frt{};
             // (what the mesh program stores, and its per-primitive generics: Eden's MakeRuntimeInfo)
             frt.previous_stage_stores = mesh_t->program.info.stores;

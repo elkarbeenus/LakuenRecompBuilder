@@ -547,6 +547,8 @@ HDR, Detail, and GPU and memory (last: the rows to change when something is wron
 | | Shadow quality | Game, Medium (half size), Low (a third), Very low (a quarter), Off (none drawn) (after a restart; at Game, AMD handhelds draw them at half size; `LAKUEN_SHADOW_SCALE=<0.25-4>` and `LAKUEN_SHADOWS=0` decide over the row) | Game |
 | | Effect pass 1 | On, Off: a costly pass of the game's (a 512x512 picture made now and then) drawn or left out, at once (a test row of this fork's) | On |
 | | Ground fog | On, Off: the fog near the ground (a half-size pass), drawn or left out, at once | On |
+| | Fog density | 100% (the game's), 75%, 50%, 25%: thins the volumetric fog, a workaround for the white haze (after a restart; shaders prepared again once) | 100% |
+| | Brightness | 100% (the game's), 90%, 80%, 70%: the exposure before the tone curve, for scenes and plants lit too brightly (after a restart) | 100% |
 | | Effect finder | On, Off: the game's passes timed on the GPU and ranked for the two rows below; each change logged for the report (after a restart; a little GPU time) | Off |
 | | Finder pass | #1-#20: the pass by its GPU cost, most first (rank, ms a frame, draws a frame); the ranking holds while it is off | #1 |
 | | Finder pass drawn | On, Off: the pass picked above drawn or left out, at once | On |

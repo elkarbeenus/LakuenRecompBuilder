@@ -167,6 +167,12 @@ const char* tx_report(int) {
     return b;
 }
 const char* tx_parallel(int v) { return v ? "Off" : "As the profile"; }
+const char* tx_percent_own(int v) {   // (Fog density, Brightness: 100 % the game's own)
+    static char b[32];
+    if (v >= 100) return "100% (the game's)";
+    snprintf(b, sizeof b, "%d%%", v);
+    return b;
+}
 const char* tx_fps_level(int v) { return fps_stats::level_name(v); }
 const char* tx_fps_corner(int v) { return fps_stats::corner_name(v); }   // (the FPS counter row: Off, FPS, Frame time, Graph, Breakdown)
 // (LaküenRecomp) The shadow maps' quality, smaller instead of upstream's larger (opts.shadow_res; vk_texture.cpp create,
@@ -1325,6 +1331,13 @@ Row rows[] = {
     {TAB_GRAPHICS, "Ground fog", &opts.effect_4, 0, 1, 1, tx_onoff,
      "The fog near the ground (a half-size pass, one of the costliest after the shadows). Off leaves it out at once.", nullptr,
      false, true},
+    {TAB_GRAPHICS, "Fog density", &opts.fog_density, 25, 100, 25, tx_percent_own,
+     "Thins the game's volumetric fog, against the white haze some places show (a workaround: its cause is open). Lower is "
+     "clearer, interiors' fog too. Applies after a restart; the first start after a change prepares the shaders again.",
+     nullptr, true, true},
+    {TAB_GRAPHICS, "Brightness", &opts.brightness, 70, 100, 10, tx_percent_own,
+     "Lowers the picture's exposure before its tone curve, against scenes and plants lit too brightly. Applies after a restart; "
+     "the first start after a change prepares the shaders again.", nullptr, true, true},
     {TAB_GRAPHICS, "Effect finder", &opts.finder, 0, 1, 1, tx_onoff,
      "Times the game's passes on the GPU and ranks them, for the two rows below: pick a pass, turn it off, see what is gone. "
      "Each change goes into the log for the report. Costs a little GPU time; applies after a restart.", nullptr, true, true},

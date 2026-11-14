@@ -7,7 +7,7 @@
 
 namespace mkwvk::menu_restart {
 
-constexpr int kMax = 16;   // (rows that take a restart: the menu has ten; a row past kMax would have no slot)
+constexpr int kMax = 24;   // (rows that take a restart: the menu has seventeen (LaküenRecomp: Fog density, Brightness, Parallel recording); a row past kMax would have no slot)
 
 struct State {
     int n = 0;
