@@ -92,6 +92,7 @@ bool jobs_wait_for(const std::atomic<bool>& ready, double) {
 uint64_t texture_frame_no() { return 1; }
 bool targets_persistent(const Targets& at) { return at.persistent; }
 bool exposure_log_on() { return false; }
+bool diag_on() { return false; }   // (LaküenRecomp: lakuen_diag.h)
 void exposure_note(NvnState&, const Program&) {}
 void ensure_layout(Program&) {}
 // These cases use non-fallback programs, whose topology stays unchanged.

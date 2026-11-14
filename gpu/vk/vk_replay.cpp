@@ -1461,8 +1461,16 @@ void maybe_split(VkCommandBuffer& cmd) {
 // (hookshot) One cause of those is gone: the dry pass did not mark the targets of a clear (NOP_CLEAR_COLOR in replay()). With
 // that, Castle Town's market and eight other places showed no black frame on 3 to 8 threads; the Kakariko walk was not run
 // again, so it stays off. On a 9950X3D the replay's wall time in the market goes from 10.9 ms a frame to 7.75 on 3 threads.
+// (LaküenRecomp) The Parallel recording row (parallel_recording=1 in hookshot_options.ini, read at the start): off whatever the
+// profile's RX_VK_PARALLEL says, to see whether a white picture (the exposure sum read back as ~0, vk_memory.cpp) goes with it
 int par_threads() {
-    static const int n = std::clamp(getenv("RX_VK_PARALLEL") ? atoi(getenv("RX_VK_PARALLEL")) : 0, 0, 8);
+    static const int n = [] {
+        const int env = std::clamp(getenv("RX_VK_PARALLEL") ? atoi(getenv("RX_VK_PARALLEL")) : 0, 0, 8);
+        const bool off = menu_file_int("parallel_recording", 0) == 1;
+        logf("lakuen-diag: parallel recording: %s (RX_VK_PARALLEL=%d%s)", off || env <= 1 ? "off" : "on", env,
+             off ? ", turned off by the Parallel recording row" : "");
+        return off ? 0 : env;
+    }();
     return n;
 }
 struct ParPool {

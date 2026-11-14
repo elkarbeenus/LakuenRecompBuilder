@@ -5519,13 +5519,17 @@ bool exposure_log_on() {
     return on;
 }
 void exposure_note(const NvnState& s, const Program& p) {
-    static std::unordered_map<uint64_t, bool> known;
+    // (LaküenRecomp: on with the master log's clues too, lakuen_diag.h; each thread knows its programs without a lock, so a draw
+    // that is not the final pass costs a lookup)
+    thread_local std::unordered_map<uint64_t, bool> known;
     bool hit = false;
     {
-        std::lock_guard lk(exposure_mu);
         auto it = known.find(s.prog.serial);
         if (it != known.end()) hit = it->second;
-        else hit = known[s.prog.serial] = program_code_keys(s).find("73320e720a317817") != std::string::npos;
+        else {   // (the first time on this thread: the program's codes under the lock, as before)
+            std::lock_guard lk(exposure_mu);
+            hit = known[s.prog.serial] = program_code_keys(s).find("73320e720a317817") != std::string::npos;
+        }
     }
     if (!hit) return;
     for (const Stage& st : p.stages)
@@ -5540,6 +5544,21 @@ void exposure_note(const NvnState& s, const Program& p) {
                 logf("vk: exposure %llu %g", (unsigned long long)presents_now, f);
             }
         }
+}
+// (LaküenRecomp) The last 32 presents' exposure as text, "present:value ..." oldest first, for the master log (lakuen_diag.cpp)
+std::string exposure_text() {
+    std::lock_guard lk(exposure_mu);
+    std::string out;
+    char b[48];
+    for (uint32_t i = 0; i < 32; i++) {
+        const ExposureRing& e = exposure_ring[(exposure_at + i) % 32];
+        if (!e.present) continue;
+        float v;
+        std::memcpy(&v, &e.word, 4);
+        snprintf(b, sizeof b, "%s%lld:%.4g", out.empty() ? "" : " ", (long long)e.present, v);
+        out += b;
+    }
+    return out;
 }
 void exposure_log_dump(const char* why) {
     std::lock_guard lk(exposure_mu);
@@ -7014,7 +7033,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
             wait_for(cp->ready);
         }
     }
-    if (exposure_log_on() && cp) exposure_note(s, *cp);
+    if ((exposure_log_on() || diag_on()) && cp) exposure_note(s, *cp);   // (LaküenRecomp: the master log's exposure too)
     if (cp->failed) SKIP_HERE();
     Program& p = const_cast<Program&>(*cp);
     if (p.fallback_task && !d.indirect) {

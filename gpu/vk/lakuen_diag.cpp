@@ -36,6 +36,10 @@ constexpr int kLeft = 8;
 std::atomic<uint64_t> left_key[kLeft];
 std::atomic<uint64_t> left_count[kLeft];
 
+std::mutex notes_mu;
+std::vector<std::string> notes;   // (the Effect finder's changes and the marks, 80 at most, oldest first)
+int marks = 0;
+
 std::string clock_now() {
     const time_t now = time(nullptr);
     tm t{};
@@ -70,6 +74,14 @@ void log_unbound(const char* tag, const std::vector<std::pair<uint64_t, Unbound>
 }
 
 } // namespace
+
+std::string exposure_text();   // (vk_draw.cpp: the last 32 presents' exposure, "present:value ...")
+
+void diag_note(const char* line) {
+    std::lock_guard lk(notes_mu);
+    if (notes.size() >= 80) notes.erase(notes.begin());
+    notes.push_back(clock_now() + " " + line);
+}
 
 bool diag_on() {
     static const bool on = [] {
@@ -138,7 +150,15 @@ void diag_tick() {
 void diag_mark(int n) {
     const uint64_t f = texture_frame_no();
     logf("lakuen-mark: #%d at %s, frame %llu", n, clock_now().c_str(), (unsigned long long)f);
+    {
+        char b[64];
+        snprintf(b, sizeof b, "mark #%d at frame %llu", n, (unsigned long long)f);
+        diag_note(b);
+        marks = n;
+    }
     if (!diag_on()) return;
+    logf("lakuen-mark: #%d   exposure by present (about 0 or far off the others: the picture blown out): %s", n,
+         exposure_text().c_str());
     {
         std::lock_guard lk(mu);
         const uint64_t since = f > 300 ? f - 300 : 0;   // (about the last 5 to 10 s)
@@ -165,6 +185,59 @@ void diag_mark(int n) {
         }
     else
         logf("lakuen-mark: #%d   (turn the Effect finder on for the passes the GPU drew most at the mark)", n);
+}
+
+bool diag_write_report(const std::string& path, const std::string& settings) {
+    FILE* o = fopen(path.c_str(), "w");
+    if (!o) {
+        logf("lakuen-diag: %s could not be written", path.c_str());
+        return false;
+    }
+    const uint64_t f = texture_frame_no();
+    fprintf(o, "LaküenRecomp master log (debugging), made in the game at %s, frame %llu\n", clock_now().c_str(), (unsigned long long)f);
+    fprintf(o, "The builder's lakuen_master_log.txt sums up whole runs after they end; this one is the moment you pressed the row.\n\n");
+    const char* par = getenv("RX_VK_PARALLEL");
+    fprintf(o, "--- switches\n  RX_VK_PARALLEL=%s (the Parallel recording row and the log's \"parallel recording\" line say what is in use)\n",
+            par ? par : "(none)");
+    for (const char* k : {"RX_VK_READBACK_WAIT_MS", "RX_VK_PRECOMPILE", "LAKUEN_DIAG", "HOS_AUDIO_PREBUFFER"})
+        if (const char* v = getenv(k)) fprintf(o, "  %s=%s\n", k, v);
+    fprintf(o, "\n--- settings (the menu's rows)\n%s\n", settings.c_str());
+    fprintf(o, "--- exposure by present (the last 32; about 0, or far off the others: the picture blown out to white)\n  %s\n\n",
+            exposure_text().c_str());
+    fprintf(o, "--- write-back timeouts (the CPU then reads what memory held: the light level among them)\n");
+    fprintf(o, "  capture: %llu (last frame %llu)\n  readback: %llu (last frame %llu)\n\n", (unsigned long long)wb_capture.load(),
+            (unsigned long long)wb_capture_frame.load(), (unsigned long long)wb_readback.load(),
+            (unsigned long long)wb_readback_frame.load());
+    {
+        std::lock_guard lk(mu);
+        const auto v = top_unbound(0, 40, false);
+        fprintf(o, "--- programs reading zeros (a storage buffer that could not be bound): %zu\n", unbound.size());
+        for (const auto& [k, u] : v)
+            fprintf(o, "  %016llx stage %d addr %#llx size %#llx%s: %llu times, frames %llu-%llu%s\n", (unsigned long long)k,
+                    u.stage, (unsigned long long)u.addr, (unsigned long long)u.size, u.written ? " (written)" : "",
+                    (unsigned long long)u.total, (unsigned long long)u.first, (unsigned long long)u.last,
+                    f - u.last < 300 ? "  <- just now" : "");
+        fprintf(o, "\n");
+    }
+    fprintf(o, "--- draws left out by the menu (Effect rows, Effect finder)\n");
+    for (int i = 0; i < kLeft; i++)
+        if (const uint64_t k = left_key[i].load())
+            fprintf(o, "  %016llx: %llu draws\n", (unsigned long long)k, (unsigned long long)left_count[i].load());
+    fprintf(o, "\n--- the Effect finder's ranking (GPU time a frame)%s\n", finder_on() ? "" : ": off (turn it on, restart)");
+    for (int i = 0; finder_on() && i < 20; i++) {
+        uint64_t k = 0;
+        double ms = 0, draws = 0;
+        if (!finder_entry(i, &k, &ms, &draws)) break;
+        fprintf(o, "  #%-2d %016llx %.2f ms, %.0f draws\n", i + 1, (unsigned long long)k, ms, draws);
+    }
+    {
+        std::lock_guard lk(notes_mu);
+        fprintf(o, "\n--- this run's Effect finder changes and marks (%d marks)\n", marks);
+        for (const auto& l : notes) fprintf(o, "  %s\n", l.c_str());
+    }
+    fclose(o);
+    logf("lakuen-diag: master log (debugging) written: %s", path.c_str());
+    return true;
 }
 
 } // namespace mkwvk

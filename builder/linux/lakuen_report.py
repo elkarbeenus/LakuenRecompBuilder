@@ -189,9 +189,13 @@ def summarize(log_text, folder=None, device=None, version=None):
     # the visual problems' clues (gpu/vk/lakuen_diag.cpp): the player's marks first, then the last 30 s summaries
     marks = [l.split("] ", 1)[-1] for l in lines if "lakuen-mark:" in l]
     diag = [l.split("] ", 1)[-1] for l in lines if "lakuen-diag:" in l and " on (LAKUEN_DIAG" not in l]
-    if marks or diag:
+    par = [l for l in diag if "parallel recording:" in l]
+    diag = [l for l in diag if "parallel recording:" not in l]
+    if marks or diag or par:
         w("")
         w("--- visual problems: %d marks by the player" % sum(1 for l in marks if re.search(r"lakuen-mark: #\d+ at ", l)))
+        for l in par[-1:]:
+            w("  " + l.replace("lakuen-diag: ", ""))
         for l in marks[:120]:
             w("  " + _short(l.replace("lakuen-mark: ", ""), 200))
         if diag:

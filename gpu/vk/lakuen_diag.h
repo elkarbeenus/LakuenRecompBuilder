@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace mkwvk {
 
@@ -20,5 +21,10 @@ void diag_left_out(uint64_t key);
 void diag_tick();
 /// The player's mark n: what the last seconds held
 void diag_mark(int n);
+/// A line kept for the report (the Effect finder's changes, with their time)
+void diag_note(const char* line);
+/// The menu's Create master log: masterlog-debugging.txt at path, everything above with the settings given (the menu's rows
+/// as text); true when written
+bool diag_write_report(const std::string& path, const std::string& settings);
 
 } // namespace mkwvk

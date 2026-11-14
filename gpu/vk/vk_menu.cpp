@@ -142,6 +142,14 @@ const char* tx_mark(int) {
     else snprintf(b, sizeof b, "Marked %d time%s", marks_made, marks_made == 1 ? "" : "s");
     return b;
 }
+int reports_made = 0;   // (LaküenRecomp: the Create master log row's files this run)
+const char* tx_report(int) {
+    static char b[80];
+    if (!reports_made) snprintf(b, sizeof b, "Press left/right to write it");
+    else snprintf(b, sizeof b, "Written %d time%s: masterlog-debugging.txt", reports_made, reports_made == 1 ? "" : "s");
+    return b;
+}
+const char* tx_parallel(int v) { return v ? "Off" : "As the profile"; }
 const char* tx_fps_level(int v) { return fps_stats::level_name(v); }
 const char* tx_fps_corner(int v) { return fps_stats::corner_name(v); }   // (the FPS counter row: Off, FPS, Frame time, Graph, Breakdown)
 // (LaküenRecomp) The shadow maps' quality, smaller instead of upstream's larger (opts.shadow_res; vk_texture.cpp create,
@@ -1308,6 +1316,12 @@ Row rows[] = {
      false, true},
     {TAB_GRAPHICS, "Finder pass drawn", &opts.finder_draw, 0, 1, 1, tx_onoff,
      "Off leaves the pass picked above out at once.", nullptr, false, true},
+    {TAB_GRAPHICS, "Create master log", &opts.report, 0, 1, 1, tx_report,
+     "Writes masterlog-debugging.txt in the game folder, beside hookshot_log.txt: the settings, the light level of the last "
+     "frames, what read nothing, the Effect finder's ranking and changes, and the marks. Send that file in.", nullptr, false, true},
+    {TAB_GRAPHICS, "Parallel recording", &opts.parallel_rec, 0, 1, 1, tx_parallel,
+     "Records the game's frames on several threads (faster on most PCs). Off, to see whether a white haze or a scene too bright "
+     "goes with it. Applies after a restart.", nullptr, true, true},
     {TAB_GRAPHICS, "Mark a visual problem", &opts.mark, 0, 1, 1, tx_mark,
      "Where something looks wrong (too bright, white haze, black or missing textures): change this once. The log notes the "
      "moment and what the game did just before it, for the master log and the report. With the Effect finder on, also the "
@@ -1982,7 +1996,7 @@ void save() {
                 // ultrawide= is kept, unless the row was changed in the menu)
                 const int v = saved_value(r.value);
                 fprintf(f, "%s=%d\n", ini_key(r), env_holds(&opts.output_res) && v == aspect_started ? ultrawide_read : aspect_follows_host(v) ? 1 : 0);
-            } else if (r.value && r.value != &opts.game_lang && r.value != &opts.mark) {   // (game_lang: language.txt's; mark: a moment's)
+            } else if (r.value && r.value != &opts.game_lang && r.value != &opts.mark && r.value != &opts.report) {   // (game_lang: language.txt's; mark, report: a moment's)
                 fprintf(f, "%s=%d\n", ini_key(r), saved_value(r.value));
             }
         }
@@ -4437,6 +4451,10 @@ bool menu_effect_off(uint64_t key) {   // (LaküenRecomp: the Effect pass rows a
             strftime(when, sizeof when, "%H:%M:%S", &t);
             logf("lakuen-finder: %s #%d %016llx (%.2f ms, %.0f draws) %s", when, opts.finder_pick, (unsigned long long)k, ms, draws,
                  opts.finder_draw ? "drawn" : "LEFT OUT");
+            char note[120];
+            snprintf(note, sizeof note, "finder #%d %016llx (%.2f ms, %.0f draws) %s", opts.finder_pick, (unsigned long long)k, ms,
+                     draws, opts.finder_draw ? "drawn" : "LEFT OUT");
+            diag_note(note);
         }
         if (!opts.finder_draw && key && key == picked.load(std::memory_order_relaxed)) return true;
     }
@@ -4943,11 +4961,30 @@ static void playtime_tick() {
 
 // (LaküenRecomp) Each present: the time played, the visual problems' clues (lakuen_diag.h) and the Mark a visual problem row's
 // marks (each change one)
+static std::string settings_text() {   // (the Graphics tab's rows as the menu shows them, for masterlog-debugging.txt)
+    std::string out;
+    for (const Row& r : rows) {
+        if (r.tab != TAB_GRAPHICS || !r.value || !r.text || r.heading || r.value == &opts.report || r.value == &opts.mark) continue;
+        out += "  ";
+        out += r.name;
+        out += ": ";
+        out += r.text(*r.value);
+        out += "\n";
+    }
+    return out;
+}
 static void lakuen_tick() {
     playtime_tick();
     diag_tick();
     static int seen = opts.mark;
     if (opts.mark != seen) seen = opts.mark, diag_mark(++marks_made);
+    static int seen_report = opts.report;
+    if (opts.report != seen_report) {
+        seen_report = opts.report;
+        std::string path = ini_path();
+        path = path.substr(0, path.find_last_of("\\/") + 1) + "masterlog-debugging.txt";
+        if (diag_write_report(path, settings_text())) reports_made++;
+    }
 }
 
 void menu_tick() {
