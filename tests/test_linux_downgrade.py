@@ -56,7 +56,8 @@ def handlers(answer, run_worker=False):
         return types.SimpleNamespace(start=start)
     worker = types.SimpleNamespace(Thread=thread)
     namespace = dict(APP_NAME="LaküenRecomp", os=os, linux_update=linux_update, messagebox=popup, threading=worker,
-                     tk=types.SimpleNamespace(TclError=RuntimeError), folder_has_dlss=lambda _: False)
+                     tk=types.SimpleNamespace(TclError=RuntimeError), folder_has_dlss=lambda _: False,
+                     shown_version=lambda v: v)   # (LaküenRecomp: hookshot_builder.shown_version, as it is for releases)
     exec(compile(ast.Module(body=methods, type_ignores=[]), "production-builder-handlers", "exec"), namespace)
     app = types.SimpleNamespace(tools="v2.1.0", latest=None, source_picked=False, update_tag=None,
                                 fetched=True, update_folder="prior", out=Value("authored-game"),
@@ -117,6 +118,20 @@ class Admission(unittest.TestCase):
             app.apply_launch()
             self.assertFalse(app.launch_update.visible)
             self.assertIn("newer than", app.launch_status.get())
+        self.assertEqual(events, [])
+
+    def test_older_game_without_kept_files_says_update(self):
+        """(LaküenRecomp) A game older than this builder whose folder keeps no game files: Update (a build again from the .nup),
+        not Play with the old version called the latest"""
+        app, events = handlers(False)
+        with mock.patch.object(linux_update, "game_version", return_value=("v2.0.0", False)):
+            app.apply_mode()
+        self.assertEqual(app.mode, "rebuild")
+        self.assertEqual(app.build_button.config["text"], "Update")
+        self.assertIn("builds it again", app.status.get())
+        with mock.patch.object(linux_update, "game_version", return_value=("v2.1.0", False)):
+            app.apply_mode()
+        self.assertEqual(app.mode, "up-to-date")
         self.assertEqual(events, [])
 
     def test_dlss_rebuild_cannot_bypass_downgrade_confirmation(self):

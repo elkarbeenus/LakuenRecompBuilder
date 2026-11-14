@@ -135,6 +135,23 @@ const char* tx_finder_pick(int v) {   // (LaküenRecomp: the Effect finder's pas
     else snprintf(b, sizeof b, "#%d  %.2f ms, %.0f draws  %08llx", v, ms, draws, (unsigned long long)(key >> 32));
     return b;
 }
+// (LaküenRecomp) A test build's version as a player reads it: git describe's "v0.3.3-7-g1f535a3 (source ...)" as
+// "v0.3.3 test 7 (1f535a3)"; a release's "v0.3.3 (source ...)" as it is
+std::string lakuen_version_text(const char* v) {
+    std::string s = v ? v : "";
+    const size_t sp = s.find(' ');
+    const std::string head = s.substr(0, sp), rest = sp == std::string::npos ? "" : s.substr(sp);
+    const size_t g = head.rfind("-g");
+    if (g == std::string::npos || g == 0) return s;
+    const size_t d = head.rfind('-', g - 1);
+    if (d == std::string::npos || d + 1 >= g) return s;
+    const std::string n = head.substr(d + 1, g - d - 1);
+    if (n.find_first_not_of("0123456789") != std::string::npos) return s;
+    std::string hash = head.substr(g + 2);
+    const size_t dirty = hash.find('-');
+    if (dirty != std::string::npos) hash.resize(dirty);
+    return head.substr(0, d) + " test " + n + " (" + hash + ")" + rest;
+}
 int marks_made = 0;   // (LaküenRecomp: the Mark a visual problem row's marks this run)
 const char* tx_mark(int) {
     static char b[64];
@@ -3181,7 +3198,7 @@ void draw_options(ui::Ctx& c) {
     }
     {   // (which build, at the banner's left, so a report can say it without opening the log; the release alone when the whole
         // line would run into the tabs)
-        std::string ver = std::string("Lak\xC3\xBC" "enRecomp ") + HOOKSHOT_VERSION;   // (the fork's name)
+        std::string ver = std::string("Lak\xC3\xBC" "enRecomp ") + lakuen_version_text(HOOKSHOT_VERSION);   // (the fork's name)
         const float room = (c.w - total) * 0.5f - 60 * s - c.safe, px = 15 * s;
         const auto width = [&](float p) { return ui::size_of(c.f.body, p, ver.c_str()).x; };
         // (LaküenRecomp: says what it is beside the version while there is room; it goes first when there is not)

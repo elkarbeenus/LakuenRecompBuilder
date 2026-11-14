@@ -555,6 +555,13 @@ SAVE_SOURCES = (
 )
 
 
+def shown_version(v):
+    """(LaküenRecomp) A version as a player reads it: git describe's v0.3.3-7-g1f535a3 as "v0.3.3 test 7 (1f535a3)"; others as
+    they are (gpu/vk/vk_menu.cpp lakuen_version_text does the same in the game)"""
+    m = re.match(r"^(.*)-(\d+)-g([0-9a-f]+)(?:-dirty)?$", v or "")
+    return "%s test %s (%s)" % m.groups() if m else v
+
+
 def master_log(folder):
     """(LaküenRecomp) lakuen_master_log.txt brought up to date after a run (lakuen_report.update_master); never in the way"""
     try:
@@ -1244,6 +1251,12 @@ class Builder(tk.Tk):
                             hasattr(self, "dlss") and bool(self.dlss.get()) != folder_has_dlss(expanded))
         if self.mode == "up-to-date" and dlss_changed:
             self.mode = "update-game"
+        # (LaküenRecomp) a game older than this builder whose folder keeps no game files to update from: Update builds it
+        # again from the .nup or folders chosen below, instead of Play saying the old version is the latest
+        target_now = linux_update.update_target(self.latest, self.tools, self.switching())
+        if (self.mode == "up-to-date" and game and target_now and game != target_now and not kept
+                and not linux_update.older_version(target_now, game)):
+            self.mode = "rebuild"
         button = self.build_button
         if button is None:
             return
@@ -1253,7 +1266,7 @@ class Builder(tk.Tk):
         except tk.TclError:
             return
         button.configure(text={"update-game": "Update", "up-to-date": "Play", "update-builder": "Update builder",
-                                "build": "Build the game"}[self.mode])
+                                "build": "Build the game", "rebuild": "Update"}[self.mode])
         about = getattr(self, "about_label", None)   # (Windows: the time only for a build)
         try:
             if about is not None and about.winfo_exists():
@@ -1266,14 +1279,17 @@ class Builder(tk.Tk):
                             % ("with" if self.dlss.get() else "without"))
         elif self.mode == "update-game":
             self.status.set(APP_NAME + " %s is available. Your game is %s. Update downloads only what changed, then compiles what changed."
-                            % (target, game))
+                            % (shown_version(target), shown_version(game)))
+        elif self.mode == "rebuild":
+            self.status.set(APP_NAME + " %s is available. Your game is %s. Update builds it again from your game files above "
+                            "(your saves and settings stay)." % (shown_version(target), shown_version(game)))
         elif self.mode == "up-to-date" and linux_update.older_version(target, game):
             self.status.set("Your game is %s, newer than this builder's update target %s. Play keeps this version; "
                             "choose another update track to change versions." % (game, target))
         elif self.mode == "up-to-date" and self.latest is None:
             self.status.set("Your game is %s, as this builder. GitHub did not answer, so newer versions could not be checked." % game)
         elif self.mode == "up-to-date":
-            self.status.set("%s is the latest version." % game)
+            self.status.set("%s is the latest version." % shown_version(game))
         elif self.mode == "update-builder":
             self.status.set(APP_NAME + " Builder %s is available (this one is %s). Update it first, then build." % (target, self.tools or "this one"))
         else:
