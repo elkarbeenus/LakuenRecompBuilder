@@ -31,7 +31,7 @@ class RecompLauncherJsonTests(unittest.TestCase):
     def test_windows_zip_carries_it(self):
         workflow = (ROOT / ".github" / "workflows" / "windows-builder.yml").read_text(encoding="utf-8")
         self.assertIn('z.write("recomplauncher.json", "recomplauncher.json")', workflow)
-        self.assertIn("dist/Hookshot-*-Windows-x64.zip", workflow)
+        self.assertIn("dist/LakuenRecomp-*-Windows-x64.zip", workflow)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ static class Updater
 {
     const string Latest = "https://api.github.com/repos/elkarbeenus/LakuenRecompBuilder/releases/latest";
     const string Asset = "HookshotBuilder.zip";
-    const string SetupAsset = "HookshotBuilder.exe";            // (the setup, builder/setup/setup.c: a release holds it and its list)
+    const string SetupAsset = "LakuenRecomp.exe";               // (the setup, builder/setup/setup.c: a release holds it and its list)
     const string SetupList = "hookshot-setup.txt";              // (scripts/make_setup_parts.py)
     static readonly TimeSpan[] RetryDelays = { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(20) };
 

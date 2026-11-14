@@ -13,7 +13,7 @@
   "start": {
     "program": [
       "Hookshot.AppImage",
-      "HookshotBuilder.exe"
+      "LakuenRecomp.exe"
     ],
     "args": [
       "--play",
@@ -23,7 +23,7 @@
   "prepare": {
     "program": [
       "Hookshot.AppImage",
-      "HookshotBuilder.exe"
+      "LakuenRecomp.exe"
     ],
     "args": [
       "--cli",

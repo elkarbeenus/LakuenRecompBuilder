@@ -365,7 +365,7 @@ class ReleaseScripts(unittest.TestCase):
         version = "v2.1.0-rc.3-%d-g%s" % ({self.Z: 1, self.A: 2, self.B: 3}.get(sha, 9), sha[:8])
         names = (["Hookshot-%s-x86_64.AppImage" % version, "Hookshot-%s-x86_64.AppImage.zsync" % version,
                   "hookshot-linux.txt"] if platform == "linux" else
-                 ["HookshotBuilder.exe", "hookshot-setup.txt", "Hookshot-%s-Windows-x64.zip" % version])
+                 ["LakuenRecomp.exe", "hookshot-setup.txt", "Hookshot-%s-Windows-x64.zip" % version])
         for name in names:
             (out / name).write_text("%s %s %s" % (platform, version, name), encoding="utf-8")
         return [str(out / name) for name in names]
@@ -604,18 +604,18 @@ class ReleaseScripts(unittest.TestCase):
 
     def test_table_names_every_file(self):
         # (the RecompLauncher zip is on every release: the table says what it is for, and what Windows players want)
-        for tag, zip_name in (("v2.1.0-rc.3", "`Hookshot-v2.1.0-rc.3-Windows-x64.zip`"), ("nightly", "the `-Windows-x64.zip`")):
+        for tag, zip_name in (("v2.1.0-rc.3", "`LakuenRecomp-v2.1.0-rc.3-Windows-x64.zip`"), ("nightly", "the `-Windows-x64.zip`")):
             with self.subTest(tag=tag):
                 r = self.run_script("release_files.sh", "table", tag)
                 self.assertEqual(r.returncode, 0, r.stderr)
-                for name in ("`HookshotBuilder.exe`", "`hookshot-setup.txt`", "`hookshot-linux.txt`", "`.zsync`",
+                for name in ("`LakuenRecomp.exe`", "`hookshot-setup.txt`", "`hookshot-linux.txt`", "`.zsync`",
                              zip_name, "RecompLauncher", "SHA256SUMS"):
                     self.assertIn(name, r.stdout)
-                self.assertIn("for RecompLauncher: on Windows, download `HookshotBuilder.exe` instead", r.stdout)
+                self.assertIn("for RecompLauncher: on Windows, download `LakuenRecomp.exe` instead", r.stdout)
 
     def test_finish_puts_the_table_with_the_zip_under_the_notes_once(self):
-        zip_name = "Hookshot-v2.1.0-Windows-x64.zip"
-        self.given([rel(5, "v2.1.0", True, False, "notes", assets=["HookshotBuilder.exe", zip_name])])
+        zip_name = "LakuenRecomp-v2.1.0-Windows-x64.zip"
+        self.given([rel(5, "v2.1.0", True, False, "notes", assets=["LakuenRecomp.exe", zip_name])])
         for _ in range(2):
             r = self.run_script("release_files.sh", "finish", "v2.1.0")
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -640,7 +640,7 @@ class ReleaseScripts(unittest.TestCase):
 
     def released(self, rid, tag, prerelease=None, files=None):
         prerelease = "-" in tag if prerelease is None else prerelease
-        names = self.linux(tag) + ["HookshotBuilder.exe", "SHA256SUMS"] if files is None else files
+        names = self.linux(tag) + ["LakuenRecomp.exe", "SHA256SUMS"] if files is None else files
         return rel(rid, tag, False, prerelease, tag + " notes", assets=names)
 
     def rc_release(self):
@@ -712,7 +712,7 @@ class ReleaseScripts(unittest.TestCase):
         self.assertEqual(sorted(a["name"] for a in self.rc_release()["assets"]), self.linux("v2.2.0-rc.1"))
 
     def test_rc_passes_over_a_release_without_its_appimage(self):
-        self.given([self.released(4, "v2.1.0-rc.4", files=["HookshotBuilder.exe"]), self.released(3, "v2.1.0-rc.3")],
+        self.given([self.released(4, "v2.1.0-rc.4", files=["LakuenRecomp.exe"]), self.released(3, "v2.1.0-rc.3")],
                    tags={"v2.1.0-rc.4": "c" * 40, "v2.1.0-rc.3": "b" * 40})
         r = self.sync()
         self.assertIn("v2.1.0-rc.4 has no", r.stdout)

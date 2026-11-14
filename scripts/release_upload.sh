@@ -122,7 +122,7 @@ $("$files" table nightly)"
     gh release view nightly --json assets --jq '.assets[].name' | while read -r old; do
         case $old in
             Hookshot-*-x86_64.AppImage | Hookshot-*-x86_64.AppImage.zsync | LakuenRecomp-*-x86_64.AppImage | LakuenRecomp-*-x86_64.AppImage.zsync) want="${old%%-*}-.*-x86_64\\.AppImage${old##*.AppImage}" ;;
-            Hookshot-*-Windows-x64.zip) want='Hookshot-.*-Windows-x64\.zip' ;;
+            Hookshot-*-Windows-x64.zip | LakuenRecomp-*-Windows-x64.zip) want="${old%%-*}-.*-Windows-x64\\.zip" ;;
             *) continue ;;
         esac
         printf '%s\n' "${new[@]}" | grep -qxF "$old" && continue

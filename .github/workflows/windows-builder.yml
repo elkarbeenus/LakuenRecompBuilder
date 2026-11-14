@@ -215,12 +215,12 @@ jobs:
           python -I scripts/make_setup_parts.py "$RUNNER_TEMP/package" "$TAG" dist \
             --base "https://github.com/$GITHUB_REPOSITORY/releases/download/builder-parts" ${PREVIOUS:+--reuse "$PREVIOUS"}
           # (a release holds the setup as HookshotBuilder.exe: builder/HookshotBuilder/Updater.cs)
-          cp "$RUNNER_TEMP/HookshotBuilder-Setup.exe" dist/HookshotBuilder.exe
+          cp "$RUNNER_TEMP/HookshotBuilder-Setup.exe" dist/LakuenRecomp.exe
           # (RecompLauncher installs this zip: the setup beside its recomplauncher.json, named for its system and processor)
-          python -I - "dist/Hookshot-$TAG-Windows-x64.zip" <<'PY'
+          python -I - "dist/LakuenRecomp-$TAG-Windows-x64.zip" <<'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
-              z.write("dist/HookshotBuilder.exe", "HookshotBuilder.exe")
+              z.write("dist/LakuenRecomp.exe", "LakuenRecomp.exe")
               z.write("recomplauncher.json", "recomplauncher.json")
           PY
           cat dist/hookshot-setup.txt
@@ -231,9 +231,9 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            dist/HookshotBuilder.exe
+            dist/LakuenRecomp.exe
             dist/hookshot-setup.txt
-            dist/Hookshot-*-Windows-x64.zip
+            dist/LakuenRecomp-*-Windows-x64.zip
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -474,7 +474,7 @@ jobs:
       # publish job)
       - name: Setup and its list to the release
         # (a push to main that is not a release: the nightly)
-        run: scripts/release_upload.sh "${RELEASE_TAG:-nightly}" dist/HookshotBuilder.exe dist/hookshot-setup.txt dist/Hookshot-*-Windows-x64.zip
+        run: scripts/release_upload.sh "${RELEASE_TAG:-nightly}" dist/LakuenRecomp.exe dist/hookshot-setup.txt dist/LakuenRecomp-*-Windows-x64.zip
       - if: hashFiles('dist/SHA256SUMS') != ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

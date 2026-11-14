@@ -876,7 +876,7 @@ public partial class MainWindow : Window
                 try { await Updater.RunLatestSetup(this, Array.Empty<string>(), updateTarget, Switching); }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, ex.Message + " You can also download HookshotBuilder.exe from the releases page.", "LaküenRecomp");
+                    MessageBox.Show(this, ex.Message + " You can also download LakuenRecomp.exe from the releases page.", "LaküenRecomp");
                     RefreshMode();
                 }
                 return;
