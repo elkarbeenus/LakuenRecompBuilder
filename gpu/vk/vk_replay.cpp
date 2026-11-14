@@ -2560,6 +2560,25 @@ bool readback_wait_value(uint64_t v) {
              (unsigned long long)q_values.load());
     return false;
 }
+// (LaküenRecomp, from HeyListen 25d542e8, RX_VK_READBACK_STRICT) a readback of results with write-backs waits for the
+// write-back's own value too, not only the recordings' timeline. On RADV that timeline is signalled before the write-back at the
+// end of the submission has landed, and a read in the gap took the light meter's sums from an earlier submission: the
+// auto-exposure jumped, the whole picture 8-15 % brighter for ~16 frames (an RX 9070 XT: up to 99 pulses in 2 minutes with the
+// CPU busy, 0 with the wait, at no measurable cost). On NVIDIA it cost ~18 % with no pulses seen: on with RADV only by default.
+// The value waited for is the one the wait above took (its part's when it waited by part, which keeps that saving).
+// RX_VK_READBACK_STRICT=0 / 1: off / on on any driver
+static bool readback_strict_on() {
+    static const bool on = [] {
+        const bool radv = dev.driver_id == VK_DRIVER_ID_MESA_RADV;
+        const char* e = getenv("RX_VK_READBACK_STRICT");
+        const bool v = e ? atoi(e) != 0 : radv;
+        logf("vk: readback waits for the write-back %s (RX_VK_READBACK_STRICT%s)", v ? "on" : "off",
+             !e && radv ? ", on with RADV" : "");
+        return v;
+    }();
+    return on;
+}
+
 void invalidate(uint64_t gpu, uint64_t size) {
     static const bool log_inv = env_on("RX_VK_LOG_INVALIDATE");
     static std::atomic<int> logged{0};
@@ -2658,6 +2677,17 @@ void invalidate(uint64_t gpu, uint64_t size) {
                 if (!parted && !(unforced && wait_recorded(v, UINT64_MAX, &ok))) {
                     if (unforced && replay_behind()) wait_queue_empty();   // (not recorded whole: as before)
                     readback_wait_value(v);
+                }
+                // (LaküenRecomp: readback_strict_on, the value itself reached on the GPU's timeline before the CPU reads)
+                if (readback_strict_on()) {
+                    static std::atomic<int64_t> strict_waits{0};
+                    const uint64_t target = parted ? part : v;
+                    if (target > completed()) {
+                        readback_wait_value(target);
+                        if (strict_waits.fetch_add(1, std::memory_order_relaxed) % 500 == 0)
+                            logf("vk: readback strict: %lld waits for the value past the recordings' timeline",
+                                 (long long)strict_waits.load());
+                    }
                 }
                 w = true;
             }

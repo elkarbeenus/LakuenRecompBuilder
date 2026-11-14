@@ -45,6 +45,7 @@ struct Options {
                           // (menu_effect_off, vk_draw.cpp: costly passes a Steam Deck's GPU timing found; live)
     int mark = 0;         // (LaküenRecomp) Mark a visual problem: each change is a mark in the log (lakuen_diag.h); not saved
     int report = 0;       // (LaküenRecomp) Create master log: each change writes masterlog-debugging.txt beside the log; not saved
+    int fog_boxes = 0;      // (LaküenRecomp) Fog boxes: the two volume-box draws (vk_menu.cpp menu_effect_off), off by default
     int fog_density = 100;  // (LaküenRecomp) Fog density, percent (vk_shader.cpp fog_factor; read at the start)
     int brightness = 100;   // (LaküenRecomp) Brightness, percent (vk_shader.cpp brightness_factor; read at the start)
     int parallel_rec = 0; // (LaküenRecomp) Parallel recording: 0 as the profile's RX_VK_PARALLEL, 1 off; read at the start

@@ -1331,6 +1331,9 @@ Row rows[] = {
     {TAB_GRAPHICS, "Ground fog", &opts.effect_4, 0, 1, 1, tx_onoff,
      "The fog near the ground (a half-size pass, one of the costliest after the shadows). Off leaves it out at once.", nullptr,
      false, true},
+    {TAB_GRAPHICS, "Fog boxes", &opts.fog_boxes, 0, 1, 1, tx_onoff,
+     "Two small fog-volume draws that come out wrong: off, against white figures and haze in water and fountains (from Project "
+     "ReLink). On draws them as the game asks. At once.", nullptr, false, true},
     {TAB_GRAPHICS, "Fog density", &opts.fog_density, 25, 100, 25, tx_percent_own,
      "Thins the game's volumetric fog, against the white haze some places show (a workaround: its cause is open). Lower is "
      "clearer, interiors' fog too. Applies after a restart; the first start after a change prepares the shaders again.",
@@ -4493,6 +4496,15 @@ bool menu_effect_off(uint64_t key) {   // (LaküenRecomp: the Effect pass rows a
     // (0x701ae221d88b2908 and 0xc587820ce7551a01, once Effect pass 2 and 3, are always drawn: without them walls and textures
     // turned white)
     case 0xda7a7ab28b8e73d9ULL: return !opts.effect_4;
+    // (Fog boxes, from Project ReLink 3af2a28, issues 6 and 7) two small box draws (24 indices) into a half-size HDR target that
+    // read the 128 x 72 x 96 volume textures, every frame: not translated right. Link came out white in the Market fountain
+    // (an RTX 3060 Ti), the device was lost in water (RTX 50); without them the Market and Kokiri Forest look the same. Off by
+    // default (RX_VK_FOG_BOXES=1: drawn whatever the row says), live
+    case 0x2b37a33d189014a8ULL:
+    case 0x0948a49a3c3068a8ULL: {
+        static const bool forced = getenv("RX_VK_FOG_BOXES") && atoi(getenv("RX_VK_FOG_BOXES")) != 0;
+        return !forced && !opts.fog_boxes;
+    }
     default: return false;
     }
 }

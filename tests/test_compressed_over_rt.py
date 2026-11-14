@@ -30,7 +30,8 @@ FIXTURE = r'''#include <atomic>
 #include <cstring>
 enum VkFormat { VK_FORMAT_R8G8B8A8_UNORM = 37, VK_FORMAT_BC1_RGB_UNORM_BLOCK = 131, VK_FORMAT_BC7_SRGB_BLOCK = 146,
                 VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK = 147, VK_FORMAT_ASTC_4x4_UNORM_BLOCK = 157,
-                VK_FORMAT_ASTC_12x12_SRGB_BLOCK = 184, VK_FORMAT_D32_SFLOAT = 126 };
+                VK_FORMAT_ASTC_12x12_SRGB_BLOCK = 184, VK_FORMAT_D32_SFLOAT = 126,
+                VK_FORMAT_ASTC_4x4_SFLOAT_BLOCK = 1000066000, VK_FORMAT_ASTC_12x12_SFLOAT_BLOCK = 1000066013 };
 struct Texture { bool uploaded = false, astc = false, bc = false; VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
                  uint64_t gpu = 0x1000, guest_size = 0x4000; uint32_t id = 1, width = 64, height = 64, layers = 1; int nvn_format = 0; };
 static int logs;

@@ -3036,7 +3036,9 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     // the whole cutscene. RX_VK_SKIP_COMPRESSED_OVER_RT=1: as before
     static const bool skip_compressed = env_on("RX_VK_SKIP_COMPRESSED_OVER_RT");
     const bool compressed = tex->astc || tex->bc ||
-                            (tex->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && tex->format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK);
+                            (tex->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && tex->format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) ||
+                            // (LaküenRecomp, from Project ReLink ffb98f2: the HDR ASTC formats too, outside that range)
+                            (tex->format >= VK_FORMAT_ASTC_4x4_SFLOAT_BLOCK && tex->format <= VK_FORMAT_ASTC_12x12_SFLOAT_BLOCK);
     uint32_t owned = !tex->uploaded && !upload_all && (skip_compressed || !compressed) ? gpu_owned_since(tex->gpu, tex->guest_size) : 0;
     if (!tex->uploaded && !upload_all && !skip_compressed && compressed) {
         static std::atomic<int> told{0};

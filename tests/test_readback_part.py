@@ -94,6 +94,8 @@ static int waited_whole_value;   // (readback_wait_value: the main timeline, eve
 static bool replay_behind() { return false; }
 static void wait_queue_empty() {}
 static bool readback_wait_value(uint64_t) { waited_whole_value++; return true; }
+static bool readback_strict_on() { return false; }   // (LaküenRecomp: the RADV wait, off here: the by-part choice is what is tested)
+static void logf(const char*, ...) {}
 static const bool by_part = true, unforced = true;
 static uint64_t in_place_part;   // (the newest part that reads guest memory in place, as vk_memory.cpp keeps it)
 static uint64_t memory_in_place_part() { return in_place_part; }
