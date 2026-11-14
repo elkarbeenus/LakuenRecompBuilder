@@ -1002,6 +1002,14 @@ class Builder(tk.Tk):
             ttk.Button(played, text="Play the game built in %s" % self.cfg["out"],
                        command=lambda: self.play_and_close(self.cfg["out"])).pack(side="left")
             self.share_row(played, self.cfg["out"], wrap=px(360)).pack(side="left", padx=(px(12), 0))
+            # (LaküenRecomp) the master log and the report here too, not only on the launcher's page; the master log made
+            # now in the background (a run that ended in a crash or a frozen device gets its summary at the next start)
+            out = self.cfg["out"]
+            ttk.Button(played, text="Open the master log", style="Link.TButton", cursor="hand2",
+                       command=lambda: self.open_master_log(out)).pack(side="left", padx=(px(12), 0))
+            ttk.Button(played, text="Create a report to send in", style="Link.TButton", cursor="hand2",
+                       command=lambda: self.make_report(out)).pack(side="left", padx=(px(4), 0))
+            threading.Thread(target=master_log, args=(out,), daemon=True).start()
         self.section(f, "Game files", 3, columnspan=3)
         kinds = ttk.Frame(f, style="Card.TFrame", padding=px(5))
         kinds.grid(row=4, column=0, columnspan=3, sticky="we")
@@ -1854,7 +1862,8 @@ class Builder(tk.Tk):
         # (LaküenRecomp) Started from Steam (a non-Steam game's shortcut), the launcher stays, hidden, until the game ends: when it
         # closed at once, Steam took the game for ended and dropped its controller layout, and after the first press the game
         # had no input. HOOKSHOT_PLAY_DETACH=1 closes it at once as before
-        if game and steam_started() and os.environ.get("HOOKSHOT_PLAY_DETACH", "0") == "0":
+        # (LaküenRecomp: on the desktop too, so the master log follows every run, one that crashed included)
+        if game and os.environ.get("HOOKSHOT_PLAY_DETACH", "0") == "0":
             self.withdraw()
             self.update_idletasks()
             game.wait()
@@ -1882,8 +1891,8 @@ def main():
             except (tk.TclError, OSError):   # (no display for a question: play as it is)
                 pass
             game = play(folder)
-            if game and steam_started() and os.environ.get("HOOKSHOT_PLAY_DETACH", "0") == "0":
-                game.wait()   # (LaküenRecomp: under Steam, as play_and_close)
+            if game and os.environ.get("HOOKSHOT_PLAY_DETACH", "0") == "0":
+                game.wait()   # (LaküenRecomp: as play_and_close, the desktop too: the master log after every run)
                 master_log(folder)
             return
     launch = _arg("--launch")
