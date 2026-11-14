@@ -2564,16 +2564,17 @@ bool readback_wait_value(uint64_t v) {
 // write-back's own value too, not only the recordings' timeline. On RADV that timeline is signalled before the write-back at the
 // end of the submission has landed, and a read in the gap took the light meter's sums from an earlier submission: the
 // auto-exposure jumped, the whole picture 8-15 % brighter for ~16 frames (an RX 9070 XT: up to 99 pulses in 2 minutes with the
-// CPU busy, 0 with the wait, at no measurable cost). On NVIDIA it cost ~18 % with no pulses seen: on with RADV only by default.
+// CPU busy, 0 with the wait, at no measurable cost). On NVIDIA it cost ~18 % with no pulses seen. Here: opt-in, see below.
 // The value waited for is the one the wait above took (its part's when it waited by part, which keeps that saving).
 // RX_VK_READBACK_STRICT=0 / 1: off / on on any driver
 static bool readback_strict_on() {
     static const bool on = [] {
-        const bool radv = dev.driver_id == VK_DRIVER_ID_MESA_RADV;
+        // (off by default since v0.3.6: on an RX 6600 XT (RADV) in v0.3.5 the waits ran out, 76 readback timeouts in 1,350
+        // frames, each a stall, and the frame rate fell far below v0.3.4's. In this tree the value waited for can be one the
+        // timeline reaches only later; opt-in until that is understood)
         const char* e = getenv("RX_VK_READBACK_STRICT");
-        const bool v = e ? atoi(e) != 0 : radv;
-        logf("vk: readback waits for the write-back %s (RX_VK_READBACK_STRICT%s)", v ? "on" : "off",
-             !e && radv ? ", on with RADV" : "");
+        const bool v = e && atoi(e) != 0;
+        logf("vk: readback waits for the write-back %s (RX_VK_READBACK_STRICT)", v ? "on" : "off");
         return v;
     }();
     return on;
