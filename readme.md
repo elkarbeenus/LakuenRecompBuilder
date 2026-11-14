@@ -51,7 +51,19 @@ New behaviour can be switched off with an environment variable (put it in `hooks
 - **Updates from this fork:** the builder looks for new releases here (elkarbeenus/LakuenRecompBuilder), never
   at NotRexed/Hookshot's, whose newer versions would replace this fork's code; **Update** then offers them. From v0.3.3 on:
   older builders did not look, so v0.3.3 is downloaded once by hand. `LAKUEN_UPDATE_CHECK=0` turns the builder's check off. (The game itself
-  no longer checks since upstream's #2926.) (`builder/linux/linux_update.py`)
+  no longer checks since upstream's #2926.) There is no update track to choose (releases only, `LAKUEN_TRACK` for development),
+  and the button says **Update** whenever the game was built by another version than the builder, which builds it again
+  (saves and settings stay). Test builds show as "v0.3.3 test 12 (ae99fb03)". (`builder/linux/linux_update.py`)
+- **The play profile:** the game is compiled with the profile of where it spends its time (PGO). Since upstream's releases
+  are gone it comes from this fork's own copy (`scripts/windows/mirror_parts.txt`, the builder-parts release).
+- **Master log after every run:** the builder waits (hidden) for the game, writes `lakuen_master_log.txt` after it, a crash
+  included, and the main page links **Open the master log** and **Create a report to send in**. `--play` starts the game
+  without the builder's window and ends with it (for launchers that count the time played).
+- **Diagnosis in the game** (Graphics tab): **Create master log** writes `masterlog-debugging.txt` beside the log at that
+  moment, **Mark a visual problem** sets a bookmark in the log, **Parallel recording** Off for an A/B. (`gpu/vk/lakuen_diag.cpp`)
+- **Fog density** and **Brightness** (Graphics tab, after a restart): Orchid's fog and exposure workaround, which Hookshot
+  had until #2042, for the player to set; 100 % is the game's own and changes nothing.
+  (`gpu/vk/eden/shader_recompiler/ir_opt/lakuen_fog_brightness.h`)
 - **Transfer saves:** a link on the launcher's page copies the save slots and the game's settings into the game from
   LaküenPlay / Lichii, an Eden-folder emulator, Eglantine or any folder, or out of it, after backing up the side it
   overwrites (`scripts/oot_saves.py`, which also runs alone; **Check first** says what it would do).
@@ -172,8 +184,9 @@ What does not run well yet in this fork (tested on a desktop RX 6600 XT, a Steam
 - **Dialogue log:** rarely, glyph-like garbage in the text of the dialogue history.
 - **Black textures** for a moment after closing the quick item selection (R1).
 - **Lighting:** some places look far too bright, washed out in a white haze (around the market's interiors, a fairy's
-  fountain); Sharpness, the upscaler and frame generation do not change it. The ground fog
-  pass reads a buffer that is not bound (zeros); turning it off does not change this.
+  fountain, the Zora's domain), some plants too. Not the cause (tested): Sharpness, the upscaler, frame generation,
+  parallel recording, the docked or handheld profile, read-back timeouts, unbound buffers. The cause is open upstream
+  too; **Fog density** and **Brightness** below 100 % soften it.
 - **Sharpness:** a high Sharpness value makes the picture grainy with AMD FSR 3.1; 0-20 % looks cleaner.
 - **Effect pass 1** shows no visible difference yet; what it draws is still open.
 - The upstream project is no longer reachable on GitHub (2026-11-13); this fork keeps its code as of that day.
