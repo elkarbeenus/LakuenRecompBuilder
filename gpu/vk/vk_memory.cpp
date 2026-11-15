@@ -1971,7 +1971,39 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
         // RX_VK_MIRROR_MB=1024 on an 8 GB card it was most of a capture's 2.4-3 ms, six submits a frame: Hyrule Field at
         // 35-45 fps instead of 55, issue 995)
         const auto tw = std::chrono::steady_clock::now();
-        vk_timeline_wait(c->late_value);
+        // (LaküenRecomp, from Project ReLink 6d63fe7 and 055eeda) the wait gives up after a cap that follows the GPU: the larger
+        // of RX_VK_CAPTURE_WAIT_MAX_MS (20 by default; 0: 250 ms, as before) and four times a running estimate of the long waits,
+        // at most 250 ms. Most waits are a few ms; the long ones are stalls (140-220 ms at each arrival in Hyrule Castle, the GPU
+        // busy with the area's uploads), whose late pages are then copied as they are. Measured there (an RTX 3060 Ti): time lost
+        // in frames of 40 ms and more 1039 / 1177 ms -> 841 / 776. The adaptive part keeps a slow GPU (a handheld's) from having
+        // the waits the exposure needs cut, which flashed the picture white with a fixed 20 ms (exposure steps 29.4 a thousand
+        // fixed, 2.5 adaptive, 1.7-2.5 with no cap). RX_VK_CAPTURE_WAIT_ADAPT=0: the fixed cap
+        {
+            static const int wait_max_ms = getenv("RX_VK_CAPTURE_WAIT_MAX_MS") ? std::max(0, atoi(getenv("RX_VK_CAPTURE_WAIT_MAX_MS"))) : 20;
+            static const bool adapt = !getenv("RX_VK_CAPTURE_WAIT_ADAPT") || atoi(getenv("RX_VK_CAPTURE_WAIT_ADAPT")) != 0;
+            static std::atomic<int64_t> p90_us{(int64_t)wait_max_ms * 500};
+            if (wait_max_ms <= 0) {
+                vk_timeline_wait(c->late_value);
+            } else {
+                static std::atomic<int64_t> st_waits{0}, st_cut{0};
+                const int64_t p90 = p90_us.load(std::memory_order_relaxed);
+                const int cap_ms = adapt ? (int)std::clamp<int64_t>(4 * p90 / 1000, wait_max_ms, std::max(wait_max_ms, 250)) : wait_max_ms;
+                const bool must_wait = adapt && vk_timeline_completed() < c->late_value;
+                const auto c0 = std::chrono::steady_clock::now();
+                const bool done = vk_timeline_wait_for(c->late_value, (uint32_t)cap_ms);
+                if (must_wait) {
+                    const int64_t took = done ? std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count()
+                                              : (int64_t)cap_ms * 1000;
+                    if (!done) p90_us.fetch_add(2000, std::memory_order_relaxed);
+                    else if (took > p90) p90_us.fetch_add(900, std::memory_order_relaxed);
+                    else if (p90_us.fetch_sub(100, std::memory_order_relaxed) < 100) p90_us.store(0, std::memory_order_relaxed);
+                }
+                st_cut += !done;
+                if (++st_waits % 1200 == 0)
+                    logf("vk: captures' waits for late pages: %lld, %lld of them cut; the cap now %d ms (RX_VK_CAPTURE_WAIT_MAX_MS %d%s)",
+                         (long long)st_waits.load(), (long long)st_cut.load(), cap_ms, wait_max_ms, adapt ? "" : ", fixed");
+            }
+        }
         st_tk_late += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tw).count();
         st_late_wait_ns.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - tw).count(),
                                   std::memory_order_relaxed);   // (hookshot: the frame trace's late_wait_ms)

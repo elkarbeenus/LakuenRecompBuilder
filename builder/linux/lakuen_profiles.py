@@ -148,6 +148,23 @@ def apply(folder, profile):
     write_marker(folder, profile["device"], profile["version"], "applied")
 
 
+def sync_env(folder, profile):
+    """(v0.3.7) A profile applied here at its current version gets its [env] switches written again, the options left as they
+    are: a switch added to a profile (HOS_NATIVE_ZSTD) reaches the game without asking the player again or touching the
+    settings. True when the file changed"""
+    m = read_marker(folder)
+    if m.get("device") != profile["device"] or m.get("choice") != "applied" or str(m.get("version")) != str(profile["version"]):
+        return False
+    env_path = os.path.join(folder, ENV)
+    old = _read(env_path)
+    text = _set_env(old, profile["title"], profile["env"])
+    if text == old:
+        return False
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return True
+
+
 def keep(folder, profile):
     """The player's own settings stay: not offered again until the profile's version goes up"""
     write_marker(folder, profile["device"], profile["version"], "kept")

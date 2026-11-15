@@ -2498,6 +2498,15 @@ def main(a=None):
         print("the shader list was not made: the game will compile its shaders as it plays", flush=True)
     else:
         note_shader_list(work, romfs, os.path.join(out, "hookshot_shaders.bin"))
+    # (LaküenRecomp, from Project ReLink fc5eab8, issue 14) Some dumps hold textures whose first kilobytes are zeros; the game cannot
+    # decode them and never finishes loading the models that need one: the fairy fountains' floor and walls were not drawn, and as
+    # an adult the model was loaded again and again for good, 12-22 times a second, more than a processor core in play.
+    # nx2/dump_repair.py writes a small mod (mods/00-dump-repair beside the game, host/mods.c) that stands in for the ones it knows,
+    # from the player's own files; the dump is not changed. Not worth stopping a build for
+    repair = os.path.join(HERE, "dump_repair.py")
+    if os.path.isfile(repair) and run(PY + [repair, romfs, os.path.join(game_dir, "mods", "00-dump-repair")], check=False,
+                                      output=sys.stderr):
+        print("the dump's damaged textures were not checked: the game runs without the stand-ins", flush=True)
     # (hookshot) the button prompts of other controllers (host/prompts.c): the game's icon font redrawn per controller, with fontTools.
     # Without it the game shows its own icons
     prompts = os.path.join(out, "prompts")

@@ -77,6 +77,25 @@ class Profiles(unittest.TestCase):
             lp.restore(folder)
             self.assertFalse(os.path.exists(os.path.join(folder, lp.OPTIONS)))
 
+    def test_sync_env_adds_new_switches_and_leaves_the_settings(self):
+        """(v0.3.7) A switch added to an applied profile (HOS_NATIVE_ZSTD) is written, the player's settings stay; a kept
+        profile, another device or another version is not touched"""
+        with tempfile.TemporaryDirectory() as folder:
+            opt, env = os.path.join(folder, lp.OPTIONS), os.path.join(folder, lp.ENV)
+            p = lp.load("legion_go_s")
+            old = dict(p, env={"RX_VK_PARALLEL": "2"})
+            lp.apply(folder, old)
+            write(opt, read(opt).replace("frame_generation=2", "frame_generation=0"))   # (the player's own choice)
+            self.assertIn("HOS_NATIVE_ZSTD", p["env"])
+            self.assertTrue(lp.sync_env(folder, p))
+            self.assertIn("HOS_NATIVE_ZSTD=1", read(env))
+            self.assertIn("frame_generation=0", read(opt))
+            self.assertFalse(lp.sync_env(folder, p))   # (nothing new)
+            lp.keep(folder, p)
+            write(env, "")
+            self.assertFalse(lp.sync_env(folder, p))
+            self.assertEqual(read(env), "")
+
     def test_keep_is_remembered_and_another_device_asks_again(self):
         with tempfile.TemporaryDirectory() as folder:
             deck = lp.load("steamdeck")

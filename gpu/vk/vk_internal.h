@@ -277,6 +277,7 @@ uint64_t vk_timeline_completed();
 /// A future submission completion covering images retired during replay; zero: no safe value.
 uint64_t vk_retirement_value();
 void vk_timeline_wait(uint64_t v);
+bool vk_timeline_wait_for(uint64_t v, uint32_t ms);   // (LaküenRecomp, from Project ReLink: at most ms, whether v is done)
 uint32_t memory_generation();
 /// 1: a page of [guest, guest + size) was written after generation gen; 0: none was
 bool memory_written_since(uint64_t guest, uint64_t size, uint32_t gen);

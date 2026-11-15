@@ -626,6 +626,7 @@ def offer_profile(folder, ask, device=None):
         return None
     profile = lakuen_profiles.load(device or lakuen_profiles.detect())
     if not lakuen_profiles.needs_prompt(folder, profile):
+        lakuen_profiles.sync_env(folder, profile)   # (an applied profile's new switches, the settings as they are)
         return None
     again = lakuen_profiles.read_marker(folder).get("device") == profile["device"]
     answer = ask(profile_question(profile, again))

@@ -322,31 +322,41 @@ void wait_value(uint64_t v) {
 bool wait_recorded(uint64_t f, uint64_t timeout_ns, int* ok);
 } // namespace
 uint64_t vk_timeline_completed() { return timeline ? completed() : 0; }
-void vk_timeline_wait(uint64_t v) {   // (at most 250 ms: a submission held back behind the caller's thread goes on without it)
-    if (!timeline || completed() >= v) return;
+// (LaküenRecomp, from Project ReLink 6d63fe7/055eeda) vk_timeline_wait for ms at most; whether v is done. A wait that gives up
+// before 250 ms (the captures' cap, vk_memory.cpp take_capture) is not a timeout of the log's or the master log's
+bool vk_timeline_wait_for(uint64_t v, uint32_t ms) {
+    if (!timeline || completed() >= v) return true;
+    const bool cut = ms < 250;
     // (a burst recording whose write-back stamped wb_pages with burst_value does not advance `timeline` while an older queue
     // submission is stopped at an event wait; wait on `rec_timeline` where that recording actually signalled completion)
     int ok = 0;
-    if (wait_recorded(v, 250000000ull, &ok)) {
-        if (!ok) {
+    if (wait_recorded(v, (uint64_t)ms * 1000000ull, &ok)) {
+        if (!ok && !cut) {
             diag_wb_timeout(false);   // (LaküenRecomp: counted for the master log)
             static std::atomic<int> logged{0};
             if (logged++ < 8)
                 logf("vk: a capture's wait for write-back %llu timed out (done %llu)", (unsigned long long)v,
                      (unsigned long long)completed());
         }
-        return;
+        return ok != 0;
     }
     queue_flush_for(FR_VALUE);
     VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &timeline;
     wi.pValues = &v;
-    if (vkWaitSemaphores(dev.device, &wi, 250000000ull) == VK_TIMEOUT) {
-        diag_wb_timeout(false);
-        static std::atomic<int> logged{0};
-        if (logged++ < 8) logf("vk: a capture's wait for write-back %llu timed out (done %llu)", (unsigned long long)v, (unsigned long long)completed());
+    if (vkWaitSemaphores(dev.device, &wi, (uint64_t)ms * 1000000ull) == VK_TIMEOUT) {
+        if (!cut) {
+            diag_wb_timeout(false);
+            static std::atomic<int> logged{0};
+            if (logged++ < 8) logf("vk: a capture's wait for write-back %llu timed out (done %llu)", (unsigned long long)v, (unsigned long long)completed());
+        }
+        return false;
     }
+    return true;
+}
+void vk_timeline_wait(uint64_t v) {   // (at most 250 ms: a submission held back behind the caller's thread goes on without it)
+    vk_timeline_wait_for(v, 250);
 }
 namespace {
 
