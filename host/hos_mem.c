@@ -16,6 +16,7 @@ static SRWLOCK lock = SRWLOCK_INIT;
 #else
 #include <pthread.h>
 #include <sys/mman.h>
+#include <unistd.h>
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 #define LOCK() pthread_mutex_lock(&lock)
 #define UNLOCK() pthread_mutex_unlock(&lock)
@@ -277,6 +278,90 @@ HLE(_ZN2nn2os17FreeAddressRegionEm) {
     RET(0);
 }
 
+/* (LaküenRecomp, from HeyListen 76fe7cda, ported there from Longshot #324) The pages the game holds through AllocateMemoryPages, counted. On the console they come out of the same
+   memory as the heap: the application's total (hos_total_memory, 9809 MB) less the heap is all it can map, and past that
+   AllocateMemoryPages fails. Here it never did, and OoT held 8.4 GB of mapped pages beside a 6.9 GB heap (13 GB of guest
+   memory resident, a working set of 19.6 GB, against the console's 12 GB in all). One bit a 4 KB page of the guest window,
+   so that pages mapped twice or freed twice count once. HOS_PAGES_LIMIT=1: past the console's total (heap + pages),
+   AllocateMemoryPages fails as it would there; unset, only counted and logged.
+   The bits are kept a GB of the window at a time (32 KB each), allocated when a page in that GB is first mapped: one array for
+   the whole 512 GB window would be 16 MB of static data, which Windows charges to the commit this change is about */
+#define PAGES_LEAF_SHIFT 30   /* (a GB of the window: 2^18 pages, 4096 words of bits) */
+#define PAGES_LEAF_PAGES (1ULL << (PAGES_LEAF_SHIFT - 12))
+static uint64_t *mapped_bits[(HOS_GUEST_SPACE + (1ULL << PAGES_LEAF_SHIFT) - 1) >> PAGES_LEAF_SHIFT];
+static uint64_t mapped_bytes, mapped_peak, mapped_logged;
+/* map 1: marked mapped, 0: marked free, 2: nothing changed. The bytes that change (or would, for 2: those not mapped yet) */
+static int64_t pages_count_locked(uint64_t a, uint64_t n, int map) {
+    int64_t changed = 0;
+    for (uint64_t p = a >> 12; p < (a + n + 0xFFF) >> 12 && p < (HOS_GUEST_SPACE >> 12); p++) {
+        uint64_t **leaf = &mapped_bits[p / PAGES_LEAF_PAGES];
+        if (!*leaf) {   /* (nothing in this GB mapped yet) */
+            if (map == 2) { changed += 0x1000; continue; }
+            if (map == 0) continue;
+            *leaf = (uint64_t *)calloc(PAGES_LEAF_PAGES / 64, sizeof(uint64_t));
+            if (!*leaf) continue;   /* (not counted: the report errs low, as before this count) */
+        }
+        const uint64_t i = p % PAGES_LEAF_PAGES, bit = 1ULL << (i & 63);
+        uint64_t *word = &(*leaf)[i >> 6];
+        const int was = (*word & bit) != 0;
+        if (map == 2) changed += was ? 0 : 0x1000;
+        else if (map == 1 && !was) *word |= bit, changed += 0x1000;
+        else if (map == 0 && was) *word &= ~bit, changed += 0x1000;
+    }
+    return changed;
+}
+static void pages_report_locked(void) {
+    if (mapped_bytes > mapped_peak) mapped_peak = mapped_bytes;
+    const uint64_t step = 256ULL << 20;
+    if (mapped_bytes / step != mapped_logged / step) {
+        mapped_logged = mapped_bytes;
+        hos_log("mem: the game's mapped pages %llu MB (peak %llu); heap %llu MB; the console's total %llu MB",
+                (unsigned long long)(mapped_bytes >> 20), (unsigned long long)(mapped_peak >> 20),
+                (unsigned long long)(hos_heap_size >> 20), (unsigned long long)(hos_total_memory >> 20));
+    }
+}
+
+/* (longshot) what the game is told it uses: base (its program, and the system's share) plus the heap and its mapped pages;
+   base alone with HOS_MEMINFO_OLD=1. QueryMemoryInfo below, and svc GetInfo's used memory (hos_svc.c). Never more than the
+   console's total: nothing refuses AllocateMemoryPages by default (HOS_PAGES_LIMIT), and past the total the game's
+   free = total - used would wrap to a huge figure and it would map without limit again */
+/* (LaküenRecomp, from HeyListen 76fe7cda, their rule of 2026-11-15) the default by the PC's RAM: on the RTX 5070 PC (64 GB) the A/B measured castle-move
+   +3% and kokiri-idle -5% with it, so it is on only where memory is short: under 32 GB of RAM (16 GB PCs, the Deck), off
+   from 32 GB. HOS_MEMINFO_OLD=0 / 1 decides either way */
+static int meminfo_old_default(void) {
+    const char *e = getenv("HOS_MEMINFO_OLD");
+    if (e && e[0]) {
+        const int old = e[0] != '0';
+        hos_log("mem: used memory report: %s, forced by HOS_MEMINFO_OLD=%s", old ? "OFF (as before #324)" : "ON (#324)", e);
+        return old;
+    }
+    uint64_t ram = 0;
+#ifdef _WIN32
+    MEMORYSTATUSEX m = {sizeof m};
+    if (GlobalMemoryStatusEx(&m)) ram = m.ullTotalPhys;
+#else
+    const long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGESIZE);
+    if (pages > 0 && size > 0) ram = (uint64_t)pages * (uint64_t)size;
+#endif
+    const int old = ram >= (31ULL << 30);   /* (a "32 GB" PC reports a little under 32 GB) */
+    hos_log("mem: used memory report: %s, chosen by this PC's RAM (%llu MB; on under 32 GB, off from 32 GB). "
+            "HOS_MEMINFO_OLD=0 forces it on, HOS_MEMINFO_OLD=1 forces it off",
+            old ? "OFF (the program's memory only, as before #324)" : "ON (the heap and the mapped pages too, #324)",
+            (unsigned long long)(ram >> 20));
+    return old;
+}
+
+uint64_t hos_used_memory(uint64_t base) {
+    static int old = -1;
+    if (old < 0) old = meminfo_old_default();
+    if (old) return base;
+    LOCK();
+    const uint64_t mapped = mapped_bytes;
+    UNLOCK();
+    const uint64_t used = base + hos_heap_size + mapped;
+    return used < hos_total_memory ? used : hos_total_memory;
+}
+
 /* nn::os::AllocateMemoryPages(unsigned long, unsigned long) -> Result: new pages read as zero */
 HLE(_ZN2nn2os19AllocateMemoryPagesEmm) {
     HOS_TRACE_CALL("AllocateMemoryPages");
@@ -285,6 +370,24 @@ HLE(_ZN2nn2os19AllocateMemoryPagesEmm) {
         hos_log("AllocateMemoryPages(%#llx, %#llx): outside the guest window", (unsigned long long)a, (unsigned long long)n);
         RET(0xCA01);   /* svc::ResultOutOfMemory */
         return;
+    }
+    {
+        static int limit = -1;
+        if (limit < 0) limit = env_on("HOS_PAGES_LIMIT");
+        LOCK();
+        if (limit && hos_heap_size + mapped_bytes + (uint64_t)pages_count_locked(a, n, 2) > hos_total_memory) {
+            UNLOCK();
+            static int told;
+            if (told++ < 20)
+                hos_log("mem: AllocateMemoryPages(%#llx, %llu MB) refused: %llu MB mapped + %llu MB heap would pass the console's %llu MB",
+                        (unsigned long long)a, (unsigned long long)(n >> 20), (unsigned long long)(mapped_bytes >> 20),
+                        (unsigned long long)(hos_heap_size >> 20), (unsigned long long)(hos_total_memory >> 20));
+            RET(0xCA01);   /* svc::ResultOutOfMemory */
+            return;
+        }
+        mapped_bytes += (uint64_t)pages_count_locked(a, n, 1);
+        pages_report_locked();
+        UNLOCK();
     }
     static int zero_all = -1;
     if (zero_all < 0) zero_all = env_on("HOS_ZERO_ALL_PAGES");
@@ -331,6 +434,10 @@ HLE(_ZN2nn2os15FreeMemoryPagesEmm) {
         RET(0xCA01);
         return;
     }
+    LOCK();   /* (Longshot #324: no longer counted against the console's total, AllocateMemoryPages above) */
+    mapped_bytes -= (uint64_t)pages_count_locked(ARG(0), ARG(1), 0);
+    pages_report_locked();
+    UNLOCK();
     if (ARG(0) + ARG(1) > (1ULL << 32)) {   /* (mkw-recomp: the pair of AllocateMemoryPages' commit above) */
         const uint64_t lo = (ARG(0) + 0xFFF) & ~0xFFFULL, hi = (ARG(0) + ARG(1)) & ~0xFFFULL;
         /* (pages the Vulkan back end imported, as part of a pool's 16 MB chunk, stay committed and are zeroed: the GPU
@@ -358,7 +465,11 @@ HLE(_ZN2nn2os15QueryMemoryInfoEPNS0_10MemoryInfoE) {
     uint64_t info = ARG(0);
     HOS_TRACE_CALL("QueryMemoryInfo");
     G64(info + 0x00) = hos_total_memory;                       /* total available */
-    G64(info + 0x08) = hos_program_size + (16ULL << 20);       /* total used: program + system */
+    /* total used: program + system, and (Longshot #324) the heap and the pages the game has mapped, as Horizon counts it. The
+       game's resource memory takes total - used as what it may still map: with program + system alone it read ~9.6 GB free
+       whatever it held, and mapped 7.9 GB of pages beside its 6.9 GB heap in 15 minutes of play, never giving any back.
+       HOS_MEMINFO_OLD=1: program + system, as before (the default from 32 GB of RAM) */
+    G64(info + 0x08) = hos_used_memory(hos_program_size + (16ULL << 20));
     G64(info + 0x10) = hos_heap_size;                          /* total heap */
     G64(info + 0x18) = hos_heap_used;                          /* allocated heap */
     G64(info + 0x20) = hos_program_size;                       /* program */

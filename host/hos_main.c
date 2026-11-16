@@ -1785,6 +1785,7 @@ static int narrow_paths_ok(int argc, char **argv) {
 
 int main(int argc, char **argv) {
 #else
+static char driver_env_said[1024];   /* (LaküenRecomp: driver_env_choose's note, written by main before this runs) */
 static int game_main(int argc, char **argv) {
 #endif
 #ifdef _WIN32
@@ -1843,6 +1844,9 @@ static int game_main(int argc, char **argv) {
         }
     }
     hos_log("hookshot %s", HOOKSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
+#ifndef _WIN32
+    if (driver_env_said[0]) hos_log("%s", driver_env_said);   /* (decided in main: driver_env_choose) */
+#endif
     removed_switch_notes();
     void hos_control_start(const char *version);
     hos_control_start(HOOKSHOT_VERSION);   /* (HOS_CONTROL=<socket>: the control bridge, host/control.c) */
@@ -2094,12 +2098,39 @@ static void driver_cache_folder(void) {
         *p = '/';
     }
 }
+/* (LaküenRecomp, from HeyListen 5d8d37fb, ported there from Longshot d9486a08 (#900) by Zelda Ootr; linux)
+   RADV_FORCE_VRS_CONFIG_FILE dropped before anything loads Vulkan. The Steam Deck's Game Mode (SteamOS on the Legion Go S too)
+   sets it for Steam and everything it starts, naming a file it writes the Half Rate Shading rate to (/tmp/radv_vrs.<random>,
+   "1x1" when off). While that file exists RADV forces VRS for the device and puts it into every graphics pipeline's key, so
+   nothing built without it is found, in the driver's cache or ours: a start from Game Mode compiled the preparation's pipelines
+   again (about 20 a second on a Deck) where one from the desktop loads them in seconds. Dropped only when it names a file that
+   exists, which is when RADV reads it; no other driver reads it. RX_VK_HALF_RATE_SHADING=1 keeps it. RADV_FORCE_VRS, a rate
+   set by hand, is never touched. The note goes to stderr now and to the game's log once it is open (game_main) */
+static void driver_env_choose(void) {
+    const char *file = getenv("RADV_FORCE_VRS_CONFIG_FILE");
+    struct stat st;
+    if (!file || !*file || stat(file, &st) != 0) return;
+    const char *keep = getenv("RX_VK_HALF_RATE_SHADING");
+    if (keep && !strcmp(keep, "1")) {
+        snprintf(driver_env_said, sizeof driver_env_said,
+                 "vk: RADV_FORCE_VRS_CONFIG_FILE kept (RX_VK_HALF_RATE_SHADING=1): Steam's Half Rate Shading reaches the game, "
+                 "and RADV gives every graphics pipeline another key than the preparation's, so they are compiled again");
+    } else {
+        snprintf(driver_env_said, sizeof driver_env_said,
+                 "vk: RADV_FORCE_VRS_CONFIG_FILE=%.300s dropped: with it RADV gives every graphics pipeline another key than the "
+                 "preparation's and compiles them all again; Steam's Half Rate Shading has no effect here "
+                 "(RX_VK_HALF_RATE_SHADING=1 keeps it)", file);
+        unsetenv("RADV_FORCE_VRS_CONFIG_FILE");
+    }
+    fprintf(stderr, "%s\n", driver_env_said);
+}
 int main(int argc, char **argv) {
     int hos_display_init(void);
     void hos_display_loop(void);
     load_hookshot_env();
     driver_cache_room();
     driver_cache_folder();
+    driver_env_choose();
     game_argc = argc, game_argv = argv;
     int prepare_shaders = 0;
     for (int i = 1; i < argc; i++) {

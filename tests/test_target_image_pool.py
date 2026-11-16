@@ -59,7 +59,7 @@ class TargetImagePoolTests(unittest.TestCase):
     def test_the_dead_targets_are_swept_every_ten_presents(self):
         frame = block(self.tex, "void texture_frame(uint64_t completed)")
         self.assertIn('getenv("RX_VK_DEAD_EVERY")', frame)
-        self.assertIn(": 10;", frame[frame.index('getenv("RX_VK_DEAD_EVERY")'):])
+        self.assertIn(": 1;", frame[frame.index('getenv("RX_VK_DEAD_EVERY")'):])
         self.assertIn("frame_no % (dead_targets ? dead_every : 600)", frame)
 
     def test_a_dead_target_is_what_every_newer_target_over_it_has_drawn_together(self):

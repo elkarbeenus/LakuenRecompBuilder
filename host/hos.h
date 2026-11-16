@@ -56,6 +56,7 @@ int hos_game_is_mkw(void);
 #else
 #define HOS_GAME_TITLE "Lak\xC3\xBC" "enRecomp"
 #endif
+uint64_t hos_used_memory(uint64_t base);   /* (hos_mem.c) base + heap + the game's mapped pages: the used memory it is told */
 void hos_commit(uint64_t addr, uint64_t size);         /* (mkw_glue.c) guest pages made usable by host APIs */
 int hos_mem_region(uint64_t addr, uint64_t size);      /* (hos_mem.c) the control bridge: 0 if not wholly in mapped guest memory */
 #if defined(A64_WRITE_TRACK) && !defined(__EMSCRIPTEN__)

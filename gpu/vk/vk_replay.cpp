@@ -2577,17 +2577,37 @@ bool readback_wait_value(uint64_t v) {
 // CPU busy, 0 with the wait, at no measurable cost). On NVIDIA it cost ~18 % with no pulses seen. Here: opt-in, see below.
 // The value waited for is the one the wait above took (its part's when it waited by part, which keeps that saving).
 // RX_VK_READBACK_STRICT=0 / 1: off / on on any driver
-static bool readback_strict_on() {
-    static const bool on = [] {
+// RX_VK_READBACK_STRICT=<hex size>[,<hex size>...] (from HeyListen 4ecd2bf3, any value but 0 and 1): only reads of exactly
+// those sizes wait. The light meter's are 1040 and c0 (0x1040 x3 and 0xc0 a frame); a stale meter is the pulse. HeyListen made
+// that list RADV's default (an RX 9070 XT: 80.8 fps with 1040,c0 against 69.1 with all, no pulses). Here still opt-in: our
+// v0.3.5 timeouts came from waiting for values the timeline reaches late, and the light comes after the frame rate for now
+static bool readback_strict_on(uint64_t size) {
+    struct Strict { bool all = false; std::vector<uint64_t> sizes; };
+    static const Strict s = [] {
         // (off by default since v0.3.6: on an RX 6600 XT (RADV) in v0.3.5 the waits ran out, 76 readback timeouts in 1,350
         // frames, each a stall, and the frame rate fell far below v0.3.4's. In this tree the value waited for can be one the
         // timeline reaches only later; opt-in until that is understood)
         const char* e = getenv("RX_VK_READBACK_STRICT");
-        const bool v = e && atoi(e) != 0;
-        logf("vk: readback waits for the write-back %s (RX_VK_READBACK_STRICT)", v ? "on" : "off");
-        return v;
+        Strict r;
+        if (e && strcmp(e, "0") && strcmp(e, "1")) {
+            for (const char* q = e; *q;) {
+                char* end = nullptr;
+                const uint64_t v = strtoull(q, &end, 16);
+                if (end == q) break;
+                if (v) r.sizes.push_back(v);
+                q = *end == ',' ? end + 1 : end;
+            }
+            logf("vk: readback waits for the write-back for %d sizes (RX_VK_READBACK_STRICT=%s)", (int)r.sizes.size(), e);
+        } else {
+            r.all = e && atoi(e) != 0;
+            logf("vk: readback waits for the write-back %s (RX_VK_READBACK_STRICT)", r.all ? "on" : "off");
+        }
+        return r;
     }();
-    return on;
+    if (s.all) return true;
+    for (const uint64_t v : s.sizes)
+        if (v == size) return true;
+    return false;
 }
 
 void invalidate(uint64_t gpu, uint64_t size) {
@@ -2689,8 +2709,8 @@ void invalidate(uint64_t gpu, uint64_t size) {
                     if (unforced && replay_behind()) wait_queue_empty();   // (not recorded whole: as before)
                     readback_wait_value(v);
                 }
-                // (LaküenRecomp: readback_strict_on, the value itself reached on the GPU's timeline before the CPU reads)
-                if (readback_strict_on()) {
+                // (LaküenRecomp: readback_strict_on(size), the value itself reached on the GPU's timeline before the CPU reads)
+                if (readback_strict_on(size)) {
                     static std::atomic<int64_t> strict_waits{0};
                     const uint64_t target = parted ? part : v;
                     if (target > completed()) {

@@ -147,6 +147,20 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   for 8-thread handhelds first, upstream now does it on every Linux machine (#2637), which this fork takes.
   `HOS_SHORT_SLEEP_TIMER=0` or `1` decides. (`host/hos_thread.c`)
 
+**From other Hookshot forks (v0.3.8)**
+
+- Starts from SteamOS's Game Mode keep their prepared shaders: `RADV_FORCE_VRS_CONFIG_FILE`, which makes RADV key every
+  pipeline differently, is dropped at start (`RX_VK_HALF_RATE_SHADING=1` keeps it). From Longshot #900, via HeyListen.
+  (`host/hos_main.c`)
+- Render targets done with go back to the pool every frame (`RX_VK_DEAD_EVERY`, `RX_VK_DEAD_MIN_UNUSED`, 1 each; 10 and 3
+  before). From Longshot #994, via HeyListen. (`gpu/vk/vk_texture.cpp`)
+- Under 32 GB of RAM the game is told its mapped pages as used memory, as on the console, and maps less
+  (`HOS_MEMINFO_OLD=0` / `1`: on / off on any PC). From Longshot #324, via HeyListen. (`host/hos_mem.c`)
+- A pipeline belongs to the program object it was built from (`RX_VK_PIPE_BY_PROGRAM=0`: shared by key, as before). From
+  Project ReLink. (`gpu/vk/vk_draw.cpp`)
+- `RX_VK_READBACK_STRICT=1040,c0`: only the light meter's readbacks wait for their write-back (HeyListen's RADV default;
+  off here). (`gpu/vk/vk_replay.cpp`)
+
 **Sound**
 
 - The Linux sound output keeps a 30 ms cushion: playback starts, and restarts after running dry, only once three 10 ms
