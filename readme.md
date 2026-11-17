@@ -160,6 +160,14 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   Project ReLink. (`gpu/vk/vk_draw.cpp`)
 - `RX_VK_READBACK_STRICT=1040,c0`: only the light meter's readbacks wait for their write-back (HeyListen's RADV default;
   off here). (`gpu/vk/vk_replay.cpp`)
+- (v0.3.9) The replay's hot calls take their thread's pass and descriptor writer once. From Project ReLink #89.
+  (`gpu/vk/vk_draw.cpp`)
+- (v0.3.9) Mesa's submit thread with RADV from 12 hardware threads (`RX_VK_RADV_SUBMIT_THREAD=1` / `0`: on / off anywhere).
+  From Project ReLink #86 with HeyListen's rule. (`gpu/vk/radv_submit_thread.h`, `gpu/vk/vk_main.cpp`)
+- (v0.3.9) The upload budget counts the looking-up thread's own upload time (`RX_VK_UPLOAD_BUDGET_SUM=1`: all threads',
+  as before). From HeyListen. (`gpu/vk/vk_texture.cpp`)
+- (v0.3.9) The dump repair finds every damaged texture and stands in for each one with an intact relative. From Project
+  ReLink. (`nx2/dump_repair.py`)
 
 **Sound**
 

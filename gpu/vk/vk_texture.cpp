@@ -1748,6 +1748,8 @@ struct UpSlow { int64_t ns; uint32_t w, h, layers, nvn; int route; uint64_t byte
 std::vector<UpSlow> up_slowest;
 std::mutex up_mu;   // (uploads may come from a parallel replay's threads)
 std::atomic<int64_t> frame_upload_ns{0};   // (this frame's time in upload(), every thread's)
+thread_local uint64_t tl_upload_frame = 0;   // (LaküenRecomp, from HeyListen c6f44368: this thread's time in upload() in
+thread_local int64_t tl_upload_ns = 0;       // present tl_upload_frame, upload_defer's budget)
 std::atomic<int64_t> st_deferred{0}, st_deferred_frame{0};
 void upload_frame_report() {
     std::lock_guard lk(up_mu);
@@ -1780,6 +1782,8 @@ bool upload(Texture& tex, const Ranges* dirty) {
     const bool ok = upload_inner(tex, dirty);
     const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     frame_upload_ns.fetch_add(ns, std::memory_order_relaxed);
+    if (tl_upload_frame != frame_no) tl_upload_frame = frame_no, tl_upload_ns = 0;
+    tl_upload_ns += ns;
     std::lock_guard lk(up_mu);
     UpStat& u = up_frame[up_route];
     u.n++, u.bytes += (int64_t)tex.guest_size, u.ns += ns;
@@ -2929,8 +2933,14 @@ namespace {
 /// flickered, Discord 2026-11-09), 0: no deferral, as before
 bool upload_defer(const Texture& tex) {
     static const int64_t budget_ns = (int64_t)(getenv("RX_VK_UPLOAD_BUDGET_MS") ? atof(getenv("RX_VK_UPLOAD_BUDGET_MS")) : 40.0) * 1000000;
+    // (LaküenRecomp, from HeyListen c6f44368 by Mooseca) the looking-up thread's own upload time this present, not every
+    // thread's summed: the parallel replay's segment workers upload side by side, and their sum reached 40 ms when the busiest
+    // had spent 11-31 ms. Entering a town from the field held back 470 new ASTC textures, sampled black until a later
+    // present looked them up again; with the thread's own time 116 (RX 9070 XT, RADV). RX_VK_UPLOAD_BUDGET_SUM=1: summed, as before
+    static const bool summed = env_on("RX_VK_UPLOAD_BUDGET_SUM");
     if (!budget_ns || !upload_defer_ok || tex.uploaded || !tex.astc || tex.gpu_written) return false;
-    if (frame_upload_ns.load(std::memory_order_relaxed) < budget_ns) return false;
+    const int64_t spent = summed ? frame_upload_ns.load(std::memory_order_relaxed) : tl_upload_frame == frame_no ? tl_upload_ns : 0;
+    if (spent < budget_ns) return false;
     st_deferred.fetch_add(1, std::memory_order_relaxed), st_deferred_frame.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
