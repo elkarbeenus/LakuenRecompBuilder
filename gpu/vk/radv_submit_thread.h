@@ -9,6 +9,7 @@ enum class Choice {
     user_set,
     switch_off,
     not_radv,
+    few_threads,   // (LaküenRecomp, HeyListen's rule 24d1a167: no spare core under 12 hardware threads)
 };
 
 inline bool switch_is_off(const char* value) {
@@ -28,10 +29,14 @@ inline bool switch_is_off(const char* value) {
     return false;
 }
 
-inline Choice decide(bool radv, const char* mesa_value, const char* switch_value) {
+// threads: the host's hardware threads. Without the switch the submit thread is made from 12 on (a 5800X3D's 16), not on
+// the Steam Deck's or the Legion Go S's 8, where its wake-ups take a core the game's own threads need (HeyListen 24d1a167).
+// RX_VK_RADV_SUBMIT_THREAD=1 (any value but the off ones): on whatever the count
+inline Choice decide(bool radv, const char* mesa_value, const char* switch_value, long threads = 16) {
     if (!radv) return Choice::not_radv;
     if (mesa_value) return Choice::user_set;
     if (switch_is_off(switch_value)) return Choice::switch_off;
+    if (!switch_value && threads < 12) return Choice::few_threads;
     return Choice::set_on;
 }
 

@@ -675,7 +675,8 @@ bool create_device() {
     vkGetPhysicalDeviceProperties2(dev.physical, &properties);
     const auto submit_thread = radv_submit_thread::decide(driver.driverID == VK_DRIVER_ID_MESA_RADV,
                                                           getenv("MESA_VK_ENABLE_SUBMIT_THREAD"),
-                                                          getenv("RX_VK_RADV_SUBMIT_THREAD"));
+                                                          getenv("RX_VK_RADV_SUBMIT_THREAD"),
+                                                          sysconf(_SC_NPROCESSORS_ONLN));
     bool submit_thread_set = false;
     switch (submit_thread) {
     case radv_submit_thread::Choice::set_on:
@@ -689,6 +690,10 @@ bool create_device() {
         break;
     case radv_submit_thread::Choice::switch_off:
         logf("vk: RADV: Mesa submit thread left at its default (RX_VK_RADV_SUBMIT_THREAD=0)");
+        break;
+    case radv_submit_thread::Choice::few_threads:
+        logf("vk: RADV: Mesa submit thread left at its default: %ld hardware threads, under 12 (RX_VK_RADV_SUBMIT_THREAD=1: on)",
+             sysconf(_SC_NPROCESSORS_ONLN));
         break;
     case radv_submit_thread::Choice::not_radv:
         break;

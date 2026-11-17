@@ -30,6 +30,10 @@ int main() {
     CHECK(decide(true, nullptr, "no") == Choice::switch_off);
     CHECK(decide(true, nullptr, "") == Choice::switch_off);
 
+    CHECK(decide(true, nullptr, nullptr, 8) == Choice::few_threads);
+    CHECK(decide(true, nullptr, nullptr, 12) == Choice::set_on);
+    CHECK(decide(true, nullptr, "1", 8) == Choice::set_on);
+    CHECK(decide(true, nullptr, "0", 16) == Choice::switch_off);
     CHECK(decide(false, nullptr, nullptr) == Choice::not_radv);
     CHECK(decide(false, "1", nullptr) == Choice::not_radv);
     CHECK(decide(false, nullptr, "1") == Choice::not_radv);
