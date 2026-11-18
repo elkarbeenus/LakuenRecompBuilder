@@ -168,6 +168,10 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   as before). From HeyListen. (`gpu/vk/vk_texture.cpp`)
 - (v0.3.9) The dump repair finds every damaged texture and stands in for each one with an intact relative. From Project
   ReLink. (`nx2/dump_repair.py`)
+- (v0.3.10) A flush's uniform updates as writes that do not overlap, composed in stream order (`RX_VK_UB_ORDERED=0`: one
+  write per update). From HeyListen. (`gpu/vk/vk_replay.cpp`)
+- (v0.3.10) A texture upload takes only the copies its own submission's capture took (`RX_VK_FIRST_UPLOAD_OWN=0`,
+  `RX_VK_REUPLOAD_OWN=0`: every copy). From HeyListen, issue 66. (`gpu/vk/vk_memory.cpp`, `gpu/vk/vk_texture.cpp`)
 
 **Sound**
 
