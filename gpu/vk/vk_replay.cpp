@@ -839,13 +839,56 @@ namespace {
 
 /// The recording's uniform updates into guest memory (after its draws: the ones that came after an update read
 /// their overlay copies)
+/// (LaküenRecomp, from HeyListen 2a12d65c by Mooseca) The updates [first, end) of `ups` as writes that do not overlap, each
+/// given to write(dst, bytes, size): sorted by address, the ones whose bytes overlap are composed here in stream order into one
+/// write over their union (every byte of it is some update's: overlapping ranges chain), and the others are written as they
+/// are. Two vkCmdUpdateBuffer of the same bytes with no barrier between them may land in either order, and the older bytes can
+/// be the ones left for the next frames: the validation layer's sync check reported ~70 such pairs a frame on RADV (the game
+/// updates one uniform block many times a recording, 4, 16 and 64 bytes). Disjoint writes need no order, and no barrier is
+/// added (one before each overlapping update cost ~2 % fps there). RX_VK_UB_ORDERED=0: one write per update, as before
+template <class Updates, class Write>
+void ub_disjoint_writes(const Updates& ups, size_t first, size_t end, Write&& write) {
+    thread_local std::vector<size_t> order;
+    thread_local std::vector<uint8_t> merged;
+    order.clear();
+    for (size_t i = first; i < end; i++)
+        if (!ups[i].bytes.empty()) order.push_back(i);
+    std::sort(order.begin(), order.end(),
+              [&](size_t a, size_t b) { return ups[a].dst != ups[b].dst ? ups[a].dst < ups[b].dst : a < b; });
+    for (size_t g = 0; g < order.size();) {
+        const uint64_t lo = ups[order[g]].dst;
+        uint64_t hi = lo + ups[order[g]].bytes.size();
+        size_t e = g + 1;
+        while (e < order.size() && ups[order[e]].dst < hi)
+            hi = std::max<uint64_t>(hi, ups[order[e]].dst + ups[order[e]].bytes.size()), e++;
+        if (e == g + 1) {
+            write(lo, ups[order[g]].bytes.data(), (uint64_t)ups[order[g]].bytes.size());
+        } else {
+            std::sort(order.begin() + g, order.begin() + e);   // (stream order: the later bytes win)
+            merged.assign(hi - lo, 0);
+            for (size_t k = g; k < e; k++)
+                std::memcpy(merged.data() + (ups[order[k]].dst - lo), ups[order[k]].bytes.data(), ups[order[k]].bytes.size());
+            write(lo, merged.data(), hi - lo);
+        }
+        g = e;
+    }
+}
+
 void flush_ub_updates(VkCommandBuffer cmd) {
     if (ub_first_of_recording >= ub_updates.size()) return;
     GprofSpan gp(cmd, "ubupd (the stream's uniform updates -> guest memory, with its barriers)");
     gp.items = (int)(ub_updates.size() - ub_first_of_recording);
     full_barrier(cmd);
-    for (size_t i = ub_first_of_recording; i < ub_updates.size(); i++)
-        gpu_write(cmd, ub_updates[i].dst, ub_updates[i].bytes.data(), ub_updates[i].bytes.size()), gp.bytes += ub_updates[i].bytes.size();
+    static const bool ordered = !getenv("RX_VK_UB_ORDERED") || atoi(getenv("RX_VK_UB_ORDERED")) != 0;
+    if (ordered) {
+        ub_disjoint_writes(ub_updates, ub_first_of_recording, ub_updates.size(), [&](uint64_t dst, const uint8_t* bytes, uint64_t n) {
+            gpu_write(cmd, dst, bytes, n), gp.bytes += n;
+        });
+    } else {
+        for (size_t i = ub_first_of_recording; i < ub_updates.size(); i++)
+            gpu_write(cmd, ub_updates[i].dst, ub_updates[i].bytes.data(), ub_updates[i].bytes.size()),
+                gp.bytes += ub_updates[i].bytes.size();
+    }
     full_barrier(cmd);
 }
 

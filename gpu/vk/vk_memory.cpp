@@ -1219,6 +1219,9 @@ std::unordered_map<uint32_t, ShadowPage> shadow;   // guest page -> its 4 KB as 
 std::unordered_map<uint32_t, uint32_t> shadow_regions;   // (2 MB region -> its pages in the shadow)
 std::atomic<size_t> shadow_n{0};
 uint64_t shadow_seq = 0;   // (captures taken)
+// (issue 66) the capture taken for the submission being recorded: its copies' seq (0: it took none). Captures are taken on the
+// replay thread just before their submission's recording, so while one records this is its own
+std::atomic<uint64_t> shadow_seq_own{0};
 // (256 MB: past it the pages no capture took in the last 64 go, the oldest first: those the game rewrites every frame
 // stay; if none can go, a page is read from guest memory as before)
 constexpr size_t kShadowMax = 65536;
@@ -1401,8 +1404,38 @@ bool overlay_off() {
 }
 std::atomic<int64_t> st_overlaid{0}, st_differed{0};   // (pages read from the shadow; of them, ones guest memory had changed)
 
-const uint8_t* memory_as_submitted(uint64_t guest, const uint8_t* live, uint64_t n, std::vector<uint8_t>& scratch) {
+// ---- (LaküenRecomp, from HeyListen 9a697a6c and 9f725aa1 by Mooseca, issue 66) an upload takes only its own submission's
+// copies ----
+// The game reuses a texture's storage for a new one (an area's lightmaps, BC6H/BC7 atlases, and its ASTC materials, streamed in
+// after arrival) and fills or rewrites it after submitting the draws that sample it: the console's GPU, running that work later,
+// reads the new bytes. The copies the capture kept of those pages were often an earlier capture's (7-70 frames before), and an
+// upload read them: one frame of lighting blown out to magenta and white, a bloom, walls and ground in lighter colours, or a
+// roof in another material's colours (RX 9070 XT, RADV). An upload now takes a page's copy only when the capture of the
+// submission being recorded took it (a page written before that submit and again since: what the copies are for), and reads
+// guest memory for one whose copy is an earlier capture's. HeyListen: 0 of 20 arrivals flashed with it, 3 of 20 without.
+// RX_VK_FIRST_UPLOAD_OWN=0 / RX_VK_REUPLOAD_OWN=0: first uploads / re-uploads take every copy, as before
+static bool upload_own_on(int upload) {
+    static const bool first_on = [] {
+        const char* e = getenv("RX_VK_FIRST_UPLOAD_OWN");
+        return !e || atoi(e) != 0;
+    }();
+    static const bool again_on = [] {
+        const char* e = getenv("RX_VK_REUPLOAD_OWN");
+        const bool v = !e || atoi(e) != 0;
+        logf("vk: a texture's upload takes only its own submission's copies of its storage: first %s, again %s "
+             "(RX_VK_FIRST_UPLOAD_OWN, RX_VK_REUPLOAD_OWN)", first_on ? "on" : "off", v ? "on" : "off");
+        return v;
+    }();
+    const bool again = again_on;   // (read first: its line logs both switches)
+    if (upload == 1) return first_on;
+    return upload == 2 && again;
+}
+std::atomic<int64_t> st_own_live{0};   // (pages an upload read from guest memory: their copy was an earlier capture's)
+
+const uint8_t* memory_as_submitted(uint64_t guest, const uint8_t* live, uint64_t n, std::vector<uint8_t>& scratch, int upload) {
     if (!n || !shadow_n.load(std::memory_order_relaxed) || overlay_off()) return live;
+    const bool own_only = upload && upload_own_on(upload);
+    const uint64_t own = shadow_seq_own.load(std::memory_order_relaxed);
     std::lock_guard lk(shadow_mu);
     bool any = false;
     for (uint64_t r = guest >> 21; r <= (guest + n - 1) >> 21; r++) {
@@ -1411,6 +1444,10 @@ const uint8_t* memory_as_submitted(uint64_t guest, const uint8_t* live, uint64_t
         for (uint64_t p = p0; p < p1; p++) {
             auto it = shadow.find((uint32_t)p);
             if (it == shadow.end()) continue;
+            if (own_only && (!own || it->second.seq != own)) {   // (an earlier capture's copy: guest memory stands)
+                st_own_live.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
             if (!any) {
                 any = true;
                 if (scratch.data() != live) scratch.assign(live, live + n);
@@ -1424,9 +1461,10 @@ const uint8_t* memory_as_submitted(uint64_t guest, const uint8_t* live, uint64_t
     static std::atomic<int64_t> served{0};
     if (any && served.fetch_add(1) % 2000 == 0)
         logf("vk: texture storage read as submitted (%lld times; %lld pages from the copies, %lld of them rewritten in "
-             "guest memory since their submit; %zu pages kept, %zu spans, %llu MB)", (long long)served.load(),
+             "guest memory since their submit; %zu pages kept, %zu spans, %llu MB; %lld pages of uploads read from guest memory "
+             "over an earlier capture's copy)", (long long)served.load(),
              (long long)st_overlaid.load(), (long long)st_differed.load(), shadow.size(), tex_spans.size(),
-             (unsigned long long)(tex_merged_bytes >> 20));
+             (unsigned long long)(tex_merged_bytes >> 20), (long long)st_own_live.load());
     return any ? scratch.data() : live;
 }
 
@@ -2032,9 +2070,11 @@ bool take_capture(std::unique_ptr<Capture> c, uint64_t value, uint64_t completed
         for (uint32_t p : c->pages) stamp_page(p, g);
         pages_collected += c->pages.size();
     }
+    shadow_seq_own.store(0, std::memory_order_relaxed);   // (issue 66: no copy is this submission's until its capture's block)
     if (!c->pages.empty() && tex_capture_on()) {   // (the texture storage it took: the shadow, as of this submit)
         std::lock_guard sk(shadow_mu);
         shadow_seq++;
+        shadow_seq_own.store(shadow_seq, std::memory_order_relaxed);
         // (the copies of pages no capture took in the last 256 submits go, over 32 MB of them, every 256 captures: such a page is what guest
         // memory holds (a write drops its copy), and the cap's sweep below came only at 256 MB. RX_VK_SHADOW_SWEEP_OFF=1: the cap's alone)
         static const bool sweep_off = env_on("RX_VK_SHADOW_SWEEP_OFF");
