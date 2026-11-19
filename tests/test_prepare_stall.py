@@ -47,7 +47,7 @@ def block(text, marker):
     return text[start:end]
 
 
-PREDICT_HEAD = r'''
+PREDICT_HEAD = '#include "%s"\n' % (ROOT / "gpu" / "vk" / "predict_limits.h").as_posix() + r'''
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -71,7 +71,10 @@ using VkPrimitiveTopology = int;
 struct NvnState { int unused = 0; };
 struct Targets {};
 struct PipeNote { uint64_t key, prog, variant; uint32_t topo; NvnState s; };
-struct Program { uint64_t key; uint64_t variant; bool mesh = false, fallback = false; };
+using namespace mkwvk;
+struct Stage { uint32_t spirv_words = 0; };   // (LaküenRecomp: the prediction's size limit, predict_limits.h)
+struct Program { uint64_t key; uint64_t variant; bool mesh = false, fallback = false; std::vector<Stage> stages = {}; };
+static unsigned long long memory_left_mb() { return ~0ull; }
 // (the prediction's own parts, beside the stall guard: its counts, the unfinished-run marker, the sample, the driver cache's size,
 // the pool's size, and the duplicate check's key, one per note here (each note its own pipeline))
 struct PredictCounts { size_t vertex_types = 0, output_types = 0, variants_unfit = 0, notes_unfit = 0, refit = 0; };

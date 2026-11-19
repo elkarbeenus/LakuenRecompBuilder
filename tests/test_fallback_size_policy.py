@@ -13,7 +13,7 @@ def check_source():
     """The renderer still notes each stage's phis, tells RADV's GCN cards apart, and asks the policy before a fallback build"""
     needles = {
         "gpu/vk/vk_progcache.cpp": ['#include "fallback_size_policy.h"',
-                                    "p.stages[k].phis = fallback_size::spirv_phis(spirv[k].data(), spirv[k].size());",
+                                    "p.stages[k].phis = fallback_size::spirv_phis(spirv[k].data(), spirv[k].size()),",
                                     "st.phis = fallback_size::spirv_phis(spirv.data(), spirv.size());"],
         "gpu/vk/vk_main.cpp": ["dev.radv_gcn = drv.driverID == VK_DRIVER_ID_MESA_RADV && !f11.storageInputOutput16;"],
         "gpu/vk/vk_draw.cpp": ['#include "fallback_size_policy.h"',
