@@ -27,6 +27,9 @@ struct Stage {
     // program cache (vk_progcache.cpp), which every translated program passes. Not in vk_shader.cpp, whose bytes are part of
     // the translator's stamp: a change there translates every player's programs again
     mutable uint32_t phis = 0;
+    // (LaküenRecomp, from HeyListen d2384687) its SPIR-V's size in 32-bit words, noted with phis: the prediction leaves out a
+    // program too big for the driver to compile in good time (vk_draw.cpp predict_run, predict_limits.h)
+    mutable uint32_t spirv_words = 0;
 };
 
 /// A texture handle the stage reads from a storage buffer: its handle program (Shader::Info::handle_programs, Eden's

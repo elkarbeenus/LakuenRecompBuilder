@@ -74,7 +74,28 @@
 #include "warm_bounded.h"
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
+#include "predict_limits.h"   // (LaküenRecomp: what the prediction of pipelines holds itself to)
 namespace mkwvk {
+
+// (LaküenRecomp) The memory the system can still give, MB: Linux's MemAvailable (the prediction's reserve, predict_limits.h);
+// Windows: the commit left
+static unsigned long long memory_left_mb() {
+#ifdef _WIN32
+    MEMORYSTATUSEX m{};
+    m.dwLength = sizeof m;
+    return GlobalMemoryStatusEx(&m) ? (unsigned long long)(m.ullAvailPageFile >> 20) : ~0ull;
+#else
+    unsigned long long kb = ~0ull;
+    if (FILE* f = fopen("/proc/meminfo", "r")) {
+        char line[256];
+        while (fgets(line, sizeof line, f))
+            if (sscanf(line, "MemAvailable: %llu kB", &kb) == 1) break;
+        fclose(f);
+    }
+    return kb == ~0ull ? kb : kb >> 10;
+#endif
+}
+
 // (EvilOOT, RX_VK_DRAW_STATS: the pointer table's regions, vk_bank.cpp)
 struct PointerEntry { uint64_t addr, size; };
 const PointerEntry* pointer_table(const NvnState& s, int stage);
@@ -9072,7 +9093,8 @@ void predict_run(void (*progress)(size_t done, size_t total)) {
         std::unordered_map<uint64_t, std::vector<const PipeNote*>> by_program;
         std::vector<uint64_t> keys;
         std::atomic<size_t> next{0}, done{0}, made{0}, same{0};
-        std::atomic<bool> out_of_time{false}, abandoned{false}, graphics_begun{false};
+        std::atomic<bool> out_of_time{false}, abandoned{false}, graphics_begun{false}, out_of_memory{false};
+        std::atomic<size_t> too_big{0};   // (programs left out for their size: predict_limits.h)
         std::mutex first_graphics;
     };
     auto pre = std::make_shared<Pre>();
@@ -9090,12 +9112,24 @@ void predict_run(void (*progress)(size_t done, size_t total)) {
     // priority. Now the bar counts them from the start (PrepareBar), closing the window stops them (prepare_stopped, kept for the
     // next start), and they take every CPU: nothing else runs before the game
     static const int budget_s = getenv("RX_VK_PREDICT_S") ? atoi(getenv("RX_VK_PREDICT_S")) : 0;
+    static const unsigned long long max_kwords = getenv("RX_VK_PREDICT_MAX_KWORDS")
+        ? strtoull(getenv("RX_VK_PREDICT_MAX_KWORDS"), nullptr, 10) : predictlimits::kDefaultMaxKWords;
+    static const unsigned long long reserve_mb = getenv("RX_VK_PREDICT_RESERVE_MB")
+        ? strtoull(getenv("RX_VK_PREDICT_RESERVE_MB"), nullptr, 10) : predictlimits::kDefaultReserveMB;
     const auto worker = [pre, t0] {
         ub_thread_off();   // (a background thread: see ub_thread_off)
         driver_cache_only = true;
         for (;;) {
             if (prepare_stopped() || pre->abandoned.load()) return;
             if (budget_s > 0 && std::chrono::steady_clock::now() - t0 > std::chrono::seconds(budget_s)) {
+                pre->out_of_time = true;
+                return;
+            }
+            // (LaküenRecomp, HeyListen d2384687: the prediction stops short of the memory the system has left, predict_limits.h)
+            if (predictlimits::low_memory(memory_left_mb(), reserve_mb)) {
+                if (!pre->out_of_memory.exchange(true))
+                    logf("vk: predict: %llu MB of memory left (RX_VK_PREDICT_RESERVE_MB %llu): the prediction stops here, the rest "
+                         "are built in play", memory_left_mb(), reserve_mb);
                 pre->out_of_time = true;
                 return;
             }
@@ -9109,6 +9143,15 @@ void predict_run(void (*progress)(size_t done, size_t total)) {
             // twice is borrowed twice. The program's form (mesh, mesh fallback) goes with it: pipeline_key does not hold it)
             std::unordered_set<uint64_t> built;
             program_cache_borrow(pre->keys[i], [&](Program& p) {
+                uint64_t words = 0;
+                for (const Stage& st : p.stages) words += st.spirv_words;
+                if (predictlimits::too_big(words, max_kwords)) {   // (left to the draw that needs it: predict_limits.h)
+                    pre->too_big++;
+                    logf("vk: predict: program %016llx left out, %llu k words of SPIR-V (RX_VK_PREDICT_MAX_KWORDS %llu): its "
+                         "driver compile takes minutes and gigabytes; a draw that needs it builds it",
+                         (unsigned long long)p.key, (unsigned long long)(words / 1000), max_kwords);
+                    return;
+                }
                 ensure_layout(p);
                 for (const PipeNote* n : list)
                     if (n->variant == p.variant && !pre->abandoned.load()) {   // (gone on without it: no more of its list)
@@ -9185,8 +9228,12 @@ void predict_run(void (*progress)(size_t done, size_t total)) {
          pre->same.load(), all_s, decide_s, all_s - decide_s, threads.size(), left_out.vertex_types, left_out.output_types,
          left_out.variants_unfit, left_out.notes_unfit, left_out.refit,
          gone_on ? " (gone on without the pipelines the driver did not finish)"
+         : pre->out_of_memory.load() ? " (the system's memory ran low, RX_VK_PREDICT_RESERVE_MB: the rest are built in play)"
          : out_of_time.load() ? " (the time budget, RX_VK_PREDICT_S, ran out: the rest are built in play)"
          : prepare_stopped() ? " (stopped: the window was closed; the driver keeps what was built)" : "");
+    if (pre->too_big.load())
+        logf("vk: predict: %zu programs left out for their size (RX_VK_PREDICT_MAX_KWORDS %llu): built when a draw asks for them",
+             pre->too_big.load(), max_kwords);
     if (!prepare_stopped() && !out_of_time.load() && !gone_on) predicted_sample_write(pre->predicted);
     // (gone on: what is stuck is left to play, as the stall guard says; a start that does it again would only stall again)
     if (!prepare_stopped()) remove(predict_pending_path().c_str());

@@ -370,7 +370,9 @@ void get_info(Reader& r, Shader::Info& i) {
 void program_cache_save(const Program& p, const std::vector<std::vector<uint32_t>>& spirv) {
     // (each stage's phis, for fallback_compute_pipelines: the SPIR-V is not kept after this. Before the program is published)
     if (spirv.size() == p.stages.size())
-        for (size_t k = 0; k < p.stages.size(); k++) p.stages[k].phis = fallback_size::spirv_phis(spirv[k].data(), spirv[k].size());
+        for (size_t k = 0; k < p.stages.size(); k++)
+            p.stages[k].phis = fallback_size::spirv_phis(spirv[k].data(), spirv[k].size()),
+            p.stages[k].spirv_words = (uint32_t)spirv[k].size();
     disk_init();
     if (!disk_on || spirv.size() != p.stages.size()) return;
     std::vector<uint8_t> o;
@@ -504,6 +506,8 @@ void program_cache_read(FILE* in, std::mutex* mu, uint64_t key, const std::vecto
             }
             st.module = make_module(spirv);
             st.phis = fallback_size::spirv_phis(spirv.data(), spirv.size());
+    st.spirv_words = (uint32_t)spirv.size();
+            st.spirv_words = (uint32_t)spirv.size();
             ok = ok && st.module;
         }
         ok = ok && answers_fit(*p, p->answers);   // (hookshot: an answer past the stages or their slots: not this record)
