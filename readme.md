@@ -172,6 +172,10 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   write per update). From HeyListen. (`gpu/vk/vk_replay.cpp`)
 - (v0.3.10) A texture upload takes only the copies its own submission's capture took (`RX_VK_FIRST_UPLOAD_OWN=0`,
   `RX_VK_REUPLOAD_OWN=0`: every copy). From HeyListen, issue 66. (`gpu/vk/vk_memory.cpp`, `gpu/vk/vk_texture.cpp`)
+- (v0.3.11) The pipeline prediction leaves out programs over 300k SPIR-V words and stops below 2 GB of available memory
+  (`RX_VK_PREDICT_MAX_KWORDS`, `RX_VK_PREDICT_RESERVE_MB`, 0: no limit). From HeyListen. (`gpu/vk/predict_limits.h`)
+- (v0.3.11) The Scarecrow's Song's three frame counters keep their fractions above 60 fps (whole-frame sites). From
+  HeyListen, after upstream. (`nx2/oot_patches.py`)
 
 **Sound**
 
