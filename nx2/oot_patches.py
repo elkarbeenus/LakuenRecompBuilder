@@ -475,6 +475,23 @@ WHOLE_SITES = (
     ("void f_80652cb0(Ctx *__restrict A64_NOESC c) {@",
      "    c->x[22]=recomp_fp_to_int(c->vreg[0][0]&UINT64_C(0xffffffff),32,32,1,3,c->fpcr,&c->fpsr);@",
      "c->x[19] + 2296"),
+    # (LaküenRecomp, from HeyListen ddef6139, after upstream Hookshot 2d8044fb, Longshot 08771847, #2906, #2828, Longshot #87
+    #  and #294) Scarecrow's Song: playback f_832b32b0, the eight-note recording f_832b6840 (mode 10) and its completion
+    #  f_832b2690 add the frame step cut to whole frames (unsigned: the conversion's flag 0) to one elapsed counter (+0x265fc of
+    #  the actor), which advances the saved note delays, times the notes and gaps and is saved as their lengths. Cut to 0 above
+    #  60 fps, playback stayed on its first note and a recording lost its rhythm. One remainder for the three (the recording
+    #  holds the counter's address in x9, HeyListen's key). f_832b6840's other unsigned cut, the other recording mode's
+    #  (added to x12), stays the game's: its site is the cut before the addition to x10. A song recorded above 60 fps before this is not restored: record it again
+    ("void f_832b32b0(Ctx *__restrict A64_NOESC c) {@",
+     "    c->x[8]=recomp_fp_to_int(c->vreg[0][0]&UINT64_C(0xffffffff),32,32,0,3,c->fpcr,&c->fpsr);@",
+     "c->x[19] + 0x265fc"),
+    ("void f_832b6840(Ctx *__restrict A64_NOESC c) {@",
+     "    c->x[8]=recomp_fp_to_int(c->vreg[0][0]&UINT64_C(0xffffffff),32,32,0,3,c->fpcr,&c->fpsr);@"
+     "    { uint64_t _a=c->x[10],_b=((uint64_t)(uint32_t)(((uint32_t)(c->x[8])) << 0)),_r=_a+_b; _r&=0xFFFFFFFFULL; c->x[8]=_r; }@",
+     "c->x[9]"),
+    ("void f_832b2690(Ctx *__restrict A64_NOESC c) {@",
+     "    c->x[8]=recomp_fp_to_int(c->vreg[0][0]&UINT64_C(0xffffffff),32,32,0,3,c->fpcr,&c->fpsr);@",
+     "c->x[19] + 0x265fc"),
 )
 WHOLE_SITES = tuple((h.replace("@", "\n"), o.replace("@", "\n"), k) for h, o, k in WHOLE_SITES)
 WHOLE_MARK = "/* (the step's whole frames: nx2/oot_patches.py) */"
