@@ -176,6 +176,9 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   (`RX_VK_PREDICT_MAX_KWORDS`, `RX_VK_PREDICT_RESERVE_MB`, 0: no limit). From HeyListen. (`gpu/vk/predict_limits.h`)
 - (v0.3.11) The Scarecrow's Song's three frame counters keep their fractions above 60 fps (whole-frame sites). From
   HeyListen, after upstream. (`nx2/oot_patches.py`)
+- (v0.3.12) The exposure meter's sums cleared on the GPU before its two programs, and a read of only zeros given the last
+  result (`RX_VK_METER_ZERO=0`, `RX_VK_METER_HOLD=0`: as before). From upstream (pixl27), via HeyListen.
+  (`gpu/vk/vk_draw.cpp`, `gpu/vk/vk_replay.cpp`, `gpu/vk/vk_memory.cpp`)
 
 **Sound**
 
