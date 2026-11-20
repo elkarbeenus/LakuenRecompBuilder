@@ -274,6 +274,23 @@ void memory_rb_recording_begun();   // (hookshot) at a recording's start, on its
 void memory_rb_segments_begin(uint64_t base, uint64_t n);   // (and a parallel replay's segments: their order, base on)
 /// (hookshot) a range a program may write in the mirror that is not bound as written (not copied back): memory_rb_refresh
 void memory_note_gpu_write(uint64_t gpu, uint64_t size);
+/// (LaküenRecomp, from HeyListen 33873659, ported there from upstream Hookshot 53eb0441 by pixl27: its RX_VK_METER_ZERO and
+/// RX_VK_METER_HOLD parts only) The game's exposure meter: two compute programs add a frame's sums into the first 16 bytes of a
+/// 0x1040 block that the game reads and sets back to zero. A read that came before the new sums landed (or after a write-back
+/// brought the old ones back over the game's zeros) gave zero or doubled sums: the exposure stepped, white flashes and the
+/// night's flicker. RX_VK_METER_ZERO: the sums are cleared on the GPU right before each program. RX_VK_METER_HOLD: a read that
+/// finds zeros is given the last result again. Both on by default; =0 turns one off
+inline bool meter_zero_on() {
+    static const bool on = !getenv("RX_VK_METER_ZERO") || atoi(getenv("RX_VK_METER_ZERO")) != 0;
+    return on;
+}
+inline bool meter_hold_on() {
+    static const bool on = !getenv("RX_VK_METER_HOLD") || atoi(getenv("RX_VK_METER_HOLD")) != 0;
+    return on;
+}
+/// the block's start, noted where the meter's programs bind it (vk_draw.cpp), and whether guest is one (vk_replay.cpp invalidate)
+void memory_meter_range(uint64_t guest, uint64_t size);
+bool memory_is_meter(uint64_t guest);
 /// (vk_replay.cpp) The GPU's progress on the recordings' timeline, and a wait for it to reach v
 uint64_t vk_timeline_completed();
 /// A future submission completion covering images retired during replay; zero: no safe value.

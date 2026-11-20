@@ -3439,7 +3439,13 @@ bool table_track_open(int logged, int seen, int unlimited) {
     return logged < 60 && (unlimited || seen < kTableTrackLooks);
 }
 
+// (LaküenRecomp, from HeyListen 33873659 / upstream 53eb0441, pixl27, RX_VK_METER_ZERO) where an exposure program's sums were
+// bound, for its dispatch's reset
+struct MeterOut { VkBuffer buffer = VK_NULL_HANDLE; VkDeviceSize offset = 0, size = 0; };
+thread_local MeterOut meter_out;
+static bool meter_program(uint64_t key) { return key == 0x435a0138b9013040ull || key == 0x592079442d7129daull; }
 void build_descriptors(const NvnState& s, const Program& p) {
+    if (meter_program(p.key)) meter_out = {};
     dw().reset();
     dw().prog = &p;
     desc_fp().clear(), desc_fp_dummy = false;   // (Descriptor reuse: the samplers' generation is read before the first handle,
@@ -3603,6 +3609,11 @@ void build_descriptors(const NvnState& s, const Program& p) {
                                  ns, n_desc, k, (unsigned)d.cbuf_index, off, d.is_written ? " written" : "", (unsigned long long)addr,
                                  (unsigned long long)size, b ? "yes" : "NO");
                     }
+                }
+                // (LaküenRecomp, from upstream 53eb0441) the exposure meter: where its two programs bind their block
+                if (meter_program(p.key) && d.is_written && b && n == 0x1040) {
+                    memory_meter_range(host->gpu_guest(base), n);
+                    meter_out = {b.buffer, b.offset + (addr - base), n - (addr - base)};
                 }
                 // (census: every single descriptor, and table entries that hold something, with where they came from)
                 if (d.count == 1 || addr) {
@@ -9594,6 +9605,20 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
         logf("vk: %lld dispatches right after another ordered by the game's barriers so far, with none of their own (RX_VK_GAME_ORDER)",
              (long long)st_dispatch_unordered);
     work_since_barrier = true;
+    {   // (LaküenRecomp, from HeyListen 33873659 / upstream 53eb0441, pixl27; RX_VK_METER_ZERO=0 turns it off) the exposure meter:
+        // its two programs add a frame's sums into the first 16 bytes of their block, which the game reads and sets back to zero.
+        // With the game ahead of the GPU its zeros reach the mirror late, or a write-back lands over them first and the old sums
+        // come back: the next frame's are added on top (twice the light). Cleared here right before each program
+        if (meter_zero_on() && meter_program(p.key) && meter_out.buffer && meter_out.size >= 16 && !(meter_out.offset & 3)) {
+            static std::atomic<int64_t> st_zeroed{0};
+            full_barrier(cmd);
+            vkCmdFillBuffer(cmd, meter_out.buffer, meter_out.offset, 16, 0);
+            full_barrier(cmd);
+            if (st_zeroed.fetch_add(1) % 4000 == 0)
+                logf("vk: exposure sums cleared on the GPU before their programs: %lld so far (RX_VK_METER_ZERO)",
+                     (long long)st_zeroed.load());
+        }
+    }
     if (!p.stages.empty() && p.stages[0].info.uses_cooperative_matrix) {   // (the game's networks, once each: what they read and write)
         static std::mutex mu;
         static std::unordered_map<uint64_t, int> seen;

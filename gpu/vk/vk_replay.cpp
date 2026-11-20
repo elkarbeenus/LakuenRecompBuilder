@@ -12,6 +12,7 @@
 // RX_VK_SHOT_EVERY-th one (default 300) there as a PNG.
 #include <algorithm>
 #include <sys/stat.h>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -2801,6 +2802,26 @@ void invalidate(uint64_t gpu, uint64_t size) {
     // RX_VK_INVALIDATE_WAIT=1: every range, as before)
     // (decided by the live textures' storage, not by what the replay has listed: a region guessed to hold buffers
     // only, after probes that found no texture, left MKW's Grand Prix waiting at its map for a texture's texels)
+    {   // (LaküenRecomp, from HeyListen 33873659 / upstream 53eb0441, pixl27; RX_VK_METER_HOLD=0 turns it off) exposure sums read
+        // before a new result has landed are the zeros the game wrote after its last read: it is given the last result again
+        if (meter_hold_on() && size == 0x1040 && memory_is_meter(host->gpu_guest(gpu))) {
+            static std::mutex mu;
+            static std::unordered_map<uint64_t, std::array<uint32_t, 4>> last;
+            static std::atomic<int64_t> st_reads{0}, st_given{0};
+            std::array<uint32_t, 4> w{};
+            host->gpu_read(gpu, w.data(), 16);
+            std::lock_guard lk(mu);
+            if (w[0] | w[1] | w[2] | w[3]) {
+                last[gpu] = w;
+            } else if (auto it = last.find(gpu); it != last.end()) {
+                guest_cpu_write(gpu, it->second.data(), 16);   // (the write-back diff's shadows hear of it)
+                st_given++;
+            }
+            if (++st_reads % 2000 == 0)
+                logf("vk: exposure sums: 2000 reads, %lld of them given the last result again (RX_VK_METER_HOLD)",
+                     (long long)st_given.exchange(0));
+        }
+    }
     static const bool always = env_on("RX_VK_INVALIDATE_WAIT");
     if (!size) return;
     // (hookshot) and on the submitting thread's replay, the catch-up lets on what may go without forcing anything past its wait
