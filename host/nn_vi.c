@@ -249,6 +249,7 @@ volatile int hos_scene_rgba16f = 0;   /* (the scene buffer RGBA16F, not R11G11B1
 volatile uint64_t hos_step_probe = 0;   /* (f_80706be0's object, set by the lifted code when the frame-time hook is in this build; its
                                             +0xd58 is the game clock in 1/60 s: nx2/oot_patches.py) */
 volatile uint32_t hos_frame_seconds_bits = 0;   /* (the frame's seconds as a float's bits for that hook, 0: the game's own step) */
+volatile int hos_frame_carry_step = 0;   /* (LaküenRecomp, HOS_FRAME_CARRY: 1 while a step under the cap of 60 is not a whole frame) */
 /* A movie's frame count while the frames' time is given (a Frame rate cap other than 60): how many 60ths of a second this update of
    that movie player is worth, the rest carried to its next one, so the count the cutscene's cues are placed by keeps the clock
    as the movie's picture does (issue 1742: the narration ran ahead above 60 fps). 1, the game's own step, otherwise, and with
@@ -303,7 +304,9 @@ static FrameWhole frame_whole_state;
 static SRWLOCK frame_whole_lock = SRWLOCK_INIT;   /* (the game's update threads) */
 uint32_t hos_frame_whole(uint64_t at, uint32_t amount_bits) {
     AcquireSRWLockExclusive(&frame_whole_lock);
-    const uint32_t whole = frame_whole(&frame_whole_state, at, amount_bits, __atomic_load_n(&hos_frame_seconds_bits, __ATOMIC_RELAXED) != 0);
+    const int carrying = __atomic_load_n(&hos_frame_seconds_bits, __ATOMIC_RELAXED) != 0 ||
+                         __atomic_load_n(&hos_frame_carry_step, __ATOMIC_RELAXED) != 0;   /* (HOS_FRAME_CARRY: realtime_step) */
+    const uint32_t whole = frame_whole(&frame_whole_state, at, amount_bits, carrying);
     ReleaseSRWLockExclusive(&frame_whole_lock);
     return whole;
 }
@@ -399,6 +402,7 @@ static void realtime_step(int64_t now) {
     if (!rx_option(0, 1) && fps_max() == 60) {
         int *slot = (int *)GP(mod + 0x2c8);
         if (*slot >= 15 && *slot <= 60) *slot = 60;
+        hos_frame_carry_step = 0;
         return;
     }
     static int64_t last;
@@ -407,7 +411,7 @@ static void realtime_step(int64_t now) {
     static long long steps;
     const double dt = (now - last) / 1e9;
     last = now;
-    if (dt <= 0 || dt > 0.25) { count = next = 0; carry = 0; return; }   /* (a load: the average starts again) */
+    if (dt <= 0 || dt > 0.25) { count = next = 0; carry = 0; hos_frame_carry_step = 0; return; }   /* (a load: the average starts again) */
     /* (HOS_REALTIME_WINDOW=<1-5>: frames averaged for the step; 1: each step the last frame's own time) */
     static int window = -1;
     if (window < 0) {
@@ -450,6 +454,15 @@ static void realtime_step(int64_t now) {
     const int fps = realtime_rate(ratio, top, &frame_carry);
     carry = timed ? 0 : frame_carry;
     *slot = fps;
+    {   /* (LaküenRecomp, from Longshot 2ae9bffc by SadTransGirl (#1828), via HeyListen ece2d776; HOS_FRAME_CARRY=0: as before) At a
+           cap of 60 a rate under 60 that is not 30, 20 or 15 makes the game step 60 / rate, not a whole frame: 46 fps steps 1.30.
+           The game's cuts to whole frames then dropped the fraction each frame and counted 46 whole frames a second, not 60: the
+           time of day, the floor web and the Scarecrow's Song ran at 77 %, which a handheld below 60 fps sees most. The
+           whole-frame sites keep their fractions then (hos_frame_whole), as they do above a cap of 60 */
+        static int on = -1;
+        if (on < 0) on = !(getenv("HOS_FRAME_CARRY") && !atoi(getenv("HOS_FRAME_CARRY")));
+        hos_frame_carry_step = on && !timed && fps_max() == 60 && fps >= 15 && fps <= 60 && 60 % fps != 0;
+    }
     if (!(steps++ % 3000)) hos_log("vi: real-time step on: ratio %.3f, game's frame rate %d", ratio, fps);
 }
 /* HOS_PRESENT_TRACE=<csv>: native game present-call returns, not GPU completion or display times.

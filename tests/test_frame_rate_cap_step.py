@@ -83,6 +83,7 @@ volatile float hos_text_scale, hos_camera_scale;
 @OPTS@
 volatile uint64_t hos_step_probe, hos_res_module;
 volatile uint32_t hos_frame_seconds_bits;
+volatile int hos_frame_carry_step;   /* (realtime_step: HOS_FRAME_CARRY) */
 @HOST@
 static uint64_t a64_fpx_div32_div32(void *c, uint64_t a, uint64_t b) {
     float x, y; uint32_t w;
