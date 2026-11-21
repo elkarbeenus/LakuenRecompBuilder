@@ -607,6 +607,39 @@ def patch_solver_steps(s):
     return s, done
 
 
+# (LaküenRecomp, from Longshot c88f7044 by SadTransGirl (#1814), via HeyListen bbc47d1a; Castle Town's market) The
+# OptimizeChangeBank preload manager's update f_832b9880: at its label L_832b9dc8 the unit it chose is in x21 (bit 31 of w21:
+# none) and the manager in x19; the choice goes through hos_oot_ocb_pick (host/oot_ocb_hold.c) before the update tests it, so
+# a choice that only flickers between two neighbours no longer reloads them over and over. HOS_OCB_HOLD_MS (2000; 0: off)
+OCB_HEAD = "void f_832b9880(Ctx *__restrict A64_NOESC c) {"
+OCB_LABEL = "L_832b9dc8:;\n"
+OCB_TEST = re.compile(r"L_832b9dc8:;\n([ \t]*)if \(\(\(c->x\[21\] >> 31\) & 1\)\) \{ goto L_832b9e0c; \}\n")
+OCB_CALL = "c->x[21] = hos_oot_ocb_pick(c, c->x[19], c->x[21]);   /* (LaküenRecomp: the preload's choice, held) */\n"
+OCB_DECL = "extern uint64_t hos_oot_ocb_pick(Ctx *A64_NOESC, uint64_t, uint64_t);\n"
+
+
+def patch_ocb_hold(s):
+    """The preload manager's choice hook: (s, 1) when it is in s (made now or before), (s, 0) when the function is not here or
+    differs (another game version: left as it is)"""
+    at = _function(s, OCB_HEAD)
+    if at is None:
+        return s, 0
+    head, end = at
+    body = s[head:end]
+    if OCB_CALL in body:
+        return s, 1
+    found = list(OCB_TEST.finditer(body))
+    if len(found) != 1 or body.count(OCB_LABEL) != 1:
+        return s, 0
+    m = found[0]
+    at_line = m.start() + len(OCB_LABEL)
+    body = body[:at_line] + m.group(1) + OCB_CALL + body[at_line:]
+    s = s[:head] + body + s[end:]
+    if OCB_DECL not in s:
+        s = s.replace('#include "a64.h"\n', '#include "a64.h"\n' + OCB_DECL, 1)
+    return s, 1
+
+
 def patch_text_speed(s):
     """The scale at the head of the letters' block of f_80b1e140 (Text speed), and the call to hos_oot_text_pane after it
     (Text size: host/oot_text_size.c); None when the file has no such function, s unchanged when the
@@ -951,6 +984,10 @@ def patch_file(s, name, protect_hearts=False):
     if sound != out:
         lines.append("oot_patches: the sound job at 60 Hz above 60 fps in " + name)
     out = sound
+    out, found = patch_ocb_hold(out)
+    counts["preload hold"] += found
+    if found:
+        lines.append("oot_patches: neighbouring map preload held in " + name)
     solver, found = patch_solver_steps(out)
     counts["solver sites"] += found
     if solver != out:
