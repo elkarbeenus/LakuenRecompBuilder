@@ -983,19 +983,82 @@ uint64_t cap_spare_max() {
     }();
     return v;
 }
-void cap_buf_free(VkBuffer buffer, VmaAllocation alloc, void* map, uint64_t size, bool from_worker = false) {
-    std::lock_guard lk(cap_free_mu);
-    if (from_worker && cap_shutting_down.load()) return;
-    // (hookshot, RX 7800 XT: buffers up to 256 MB are kept for the next capture, not only up to 64 MB: a new one costs ~100 ms of
-    // vkAllocateMemory on AMD's driver. RX_VK_CAPTURE_KEEP_OLD=1: as before)
-    static const bool keep_old = env_on("RX_VK_CAPTURE_KEEP_OLD");
-    if (cap_free.size() < 12 && size <= (keep_old ? 64ull << 20 : 256ull << 20) &&
-        cap_free_bytes + size <= std::min<uint64_t>(cap_spare_max(), keep_old ? ~0ull : 768ull << 20)) {
-        cap_free.push_back({buffer, alloc, map, size});
-        cap_free_bytes += size;
-    } else {
-        destroy_buffer(buffer, alloc);
+// (LaküenRecomp, from Longshot 8f462db5 by SadTransGirl (#1848) via HeyListen 258b2148, its first half; RX_VK_CAP_FREE_ASYNC=0:
+// as before) A capture buffer let go past the spares is destroyed on a thread of its own, not on the thread that retired it (the
+// replay's take, holding cap_free_mu): freeing a 64-256 MB host-cached memory object is the driver unmapping and releasing every
+// page of it, takes of 25-49 ms in Longshot's author's tours. Only buffers the GPU is done with get here, and nothing else holds
+// them; the memory goes back a moment later. At the exit (cap_shutting_down) what is queued is left
+bool cap_free_async_on() {
+    static const bool on = [] {
+        const char* e = getenv("RX_VK_CAP_FREE_ASYNC");
+        const bool v = !e || atoi(e) != 0;
+        if (!v) logf("vk: capture buffers past the spares destroyed where they are retired, as before (RX_VK_CAP_FREE_ASYNC=0)");
+        return v;
+    }();
+    return on;
+}
+struct CapGone {   // (never destroyed: its thread waits on it for the life of the process)
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<std::pair<VkBuffer, VmaAllocation>> queue;
+    bool started = false;
+    std::mutex destroying;   // (held while its thread destroys a buffer: the exit note waits for it, cap_exit_note)
+};
+CapGone& cap_gone() {
+    static CapGone* g = new CapGone;
+    return *g;
+}
+void cap_destroy(VkBuffer buffer, VmaAllocation alloc) {
+    if (!cap_free_async_on() || cap_shutting_down.load()) return destroy_buffer(buffer, alloc);
+    CapGone& g = cap_gone();
+    {
+        std::lock_guard lk(g.mu);
+        g.queue.push_back({buffer, alloc});
+        if (!g.started) {
+            g.started = true;
+            try {
+                std::thread([] {
+                    CapGone& g = cap_gone();
+                    std::vector<std::pair<VkBuffer, VmaAllocation>> batch;
+                    for (;;) {
+                        {
+                            std::unique_lock lk(g.mu);
+                            g.cv.wait(lk, [&g] { return !g.queue.empty(); });
+                            batch.swap(g.queue);
+                        }
+                        for (const auto& [b, a] : batch) {
+                            std::lock_guard dk(g.destroying);   // (not cap_free_mu: a take must not wait for an unmap)
+                            if (!cap_shutting_down.load()) destroy_buffer(b, a);
+                        }
+                        batch.clear();
+                    }
+                }).detach();
+            } catch (...) {   // (no thread: destroyed here, as before)
+                g.started = false;
+                g.queue.pop_back();
+                destroy_buffer(buffer, alloc);
+                return;
+            }
+        }
     }
+    g.cv.notify_one();
+}
+void cap_buf_free(VkBuffer buffer, VmaAllocation alloc, void* map, uint64_t size, bool from_worker = false) {
+    {
+        std::lock_guard lk(cap_free_mu);
+        if (from_worker && cap_shutting_down.load()) return;
+        // (hookshot, RX 7800 XT: buffers up to 256 MB are kept for the next capture, not only up to 64 MB: a new one costs ~100 ms
+        // of vkAllocateMemory on AMD's driver. RX_VK_CAPTURE_KEEP_OLD=1: as before)
+        static const bool keep_old = env_on("RX_VK_CAPTURE_KEEP_OLD");
+        if (cap_free.size() < 12 && size <= (keep_old ? 64ull << 20 : 256ull << 20) &&
+            cap_free_bytes + size <= std::min<uint64_t>(cap_spare_max(), keep_old ? ~0ull : 768ull << 20)) {
+            cap_free.push_back({buffer, alloc, map, size});
+            cap_free_bytes += size;
+            return;
+        }
+        if (!cap_free_async_on()) return destroy_buffer(buffer, alloc);   // (as before: under the lock)
+    }
+    cap_destroy(buffer, alloc);   // (after the spare list was offered it: a spare is never destroyed)
 }
 void cap_buf_retire(std::map<uint32_t, CapBuf>::iterator it) {
     cap_bytes -= it->second.size;
@@ -1054,8 +1117,11 @@ bool cap_prewarm_on() {
 std::atomic<int> cap_prewarm_busy{0};
 std::atomic<int> cap_prewarm_class_busy[4]{};   // (32, 64, 128 and 192 MB spares being made)
 void cap_exit_note() {
-    std::lock_guard lk(cap_free_mu);   // (a worker inside cap_buf_free finishes first; one after this sees the flag under the same mutex)
-    cap_shutting_down = true;
+    {
+        std::lock_guard lk(cap_free_mu);   // (a worker inside cap_buf_free finishes first; one after this sees the flag under the same mutex)
+        cap_shutting_down = true;
+    }
+    std::lock_guard dk(cap_gone().destroying);   // (a buffer being destroyed on cap_destroy's thread finishes first)
 }
 int cap_prewarm_index(uint64_t size) { return size <= (32ull << 20) ? 0 : size <= (64ull << 20) ? 1 : size <= (128ull << 20) ? 2 : size <= (192ull << 20) ? 3 : -1; }
 void cap_spare_make(uint64_t size, int index) {
