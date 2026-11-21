@@ -179,6 +179,12 @@ New behaviour can be switched off with an environment variable (put it in `hooks
 - (v0.3.12) The exposure meter's sums cleared on the GPU before its two programs, and a read of only zeros given the last
   result (`RX_VK_METER_ZERO=0`, `RX_VK_METER_HOLD=0`: as before). From upstream (pixl27), via HeyListen.
   (`gpu/vk/vk_draw.cpp`, `gpu/vk/vk_replay.cpp`, `gpu/vk/vk_memory.cpp`)
+- (v0.3.13) Below 60 fps at the 60 cap, the whole-frame counters keep their fractions (`HOS_FRAME_CARRY=0`: cut). From
+  Longshot #1828, via HeyListen. (`host/nn_vi.c`)
+- (v0.3.13) The neighbouring map's preload takes a new choice once it has stayed 2 s (`HOS_OCB_HOLD_MS`, 0: the game's own).
+  From Longshot #1814, via HeyListen. (`host/oot_ocb_hold.h`, `host/oot_ocb_hold.c`, `nx2/oot_patches.py`)
+- (v0.3.13) Capture buffers past the spares destroyed on a thread of their own (`RX_VK_CAP_FREE_ASYNC=0`: where retired).
+  From Longshot #1848, via HeyListen. (`gpu/vk/vk_memory.cpp`)
 
 **Sound**
 
