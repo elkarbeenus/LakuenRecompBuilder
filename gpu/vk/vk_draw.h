@@ -37,6 +37,10 @@ void note_color_types(const PipeNote& n, uint8_t types[8]);
 #include "vk_internal.h"
 #include "vk_state.h"
 
+namespace mesh_conv {
+struct Item;   // (mesh_conv.h)
+}
+
 namespace mkwvk {
 
 struct DrawArgs {
@@ -52,6 +56,8 @@ struct DrawArgs {
     bool mesh = false;
     int groups[3] = {0, 1, 1};
     uint32_t first_task = 0;   // (hookshot: a direct mesh draw's first task workgroup, NVN's DrawMeshTasks(first, count))
+    // (longshot) its op in the stream (a mesh draw's: RX_VK_MESH_CONV=2 finds its arguments converted at the barrier before it)
+    const void* op = nullptr;
 };
 
 /// A recording starts (its slot's descriptor pool and upload stream are reset); value: the timeline value it signals
@@ -68,6 +74,13 @@ void clear_color_target(VkCommandBuffer cmd, NvnState& s, int index, const float
 void clear_depth_stencil(VkCommandBuffer cmd, NvnState& s, float depth, bool depth_mask, uint32_t stencil,
                          uint32_t stencil_mask);
 void clear_stats(int64_t* clears, int64_t* masked);
+/// (longshot, RX_VK_MESH_CONV: mesh_conv.h) Whether this recording converts the indirect mesh draws after each barrier of the game's
+/// at once (2, with mesh shaders); its value; the batch's conversion right after such a barrier, of the draws scanned
+/// after it (none: the last batch let go); and the counts since the last call (vk_draw.cpp mesh_conv_stats)
+bool mesh_conv_batching();
+int mesh_conv_mode();
+void mesh_conv_batch(VkCommandBuffer cmd, const mesh_conv::Item* items, size_t n);
+void mesh_conv_stats(int64_t out[7]);
 /// indirect: the workgroup counts' GPU address (x, y, z unused)
 void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t z, uint64_t indirect);
 void dry_mark_written(NvnState& s, bool compute, bool first);   // (hookshot: the parallel replay's dry pass)
