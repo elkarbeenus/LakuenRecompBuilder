@@ -1164,7 +1164,13 @@ void cap_prewarm_class(uint64_t size) {
     }
 }
 bool cap_buf_get(uint64_t need, VkBuffer& buffer, VmaAllocation& alloc, void*& map, uint64_t& size) {
-    std::lock_guard lk(cap_free_mu);
+    // (longshot 7daafa7a, #1553, 4ef972c6 and d87dd600; RX_VK_CAP_GET_FALLBACK=0: the lock is held through the driver's allocation
+    // and a refused buffer fails the capture, as before) The driver's allocation can block for ~100 ms (AMD's vkAllocateMemory), and
+    // a replay retiring its capture buffers (cap_buf_free) must be able to give a spare back meanwhile: the lock is let go before it.
+    // A refused size class then takes any spare that fits, however large (one may have been given back while the driver refused),
+    // and last the need's exact size, without the class's round-up and without a memory object of its own
+    static const bool fallback = env_int("RX_VK_CAP_GET_FALLBACK", 1) != 0;
+    std::unique_lock lk(cap_free_mu);
     if (cap_prewarm_on()) {
         static bool first = true;
         if (first) {   // (the first capture: the classes a load asks for)
@@ -1183,8 +1189,34 @@ bool cap_buf_get(uint64_t need, VkBuffer& buffer, VmaAllocation& alloc, void*& m
     }
     size = cap_buf_size(need);
     map = nullptr;
-    return create_buffer_cached(size, cap_buf_usage(), buffer, alloc, &map,
-                                size >= (16ull << 20) && !env_on("RX_VK_CAP_BLOCKS")) && map;
+    if (fallback) lk.unlock();
+    bool ok = create_buffer_cached(size, cap_buf_usage(), buffer, alloc, &map,
+                                   size >= (16ull << 20) && !env_on("RX_VK_CAP_BLOCKS")) && map;
+    if (!ok && fallback) {
+        map = nullptr;
+        size_t best = 0;
+        {
+            std::lock_guard lk2(cap_free_mu);
+            for (size_t i = 0; i < cap_free.size(); i++)
+                if (cap_free[i].size >= need && cap_free[i].map && (!best || cap_free[i].size < cap_free[best - 1].size)) best = i + 1;
+            if (best) {
+                const FreeBuf f = cap_free[best - 1];
+                buffer = f.buffer, alloc = f.alloc, map = f.map, size = f.size;
+                cap_free_bytes -= size;
+                cap_free.erase(cap_free.begin() + (ptrdiff_t)(best - 1));
+                ok = true;
+            }
+        }
+        if (!ok && size != need) {
+            size = need;
+            map = nullptr;
+            ok = create_buffer_cached(size, cap_buf_usage(), buffer, alloc, &map, false) && map;
+        }
+        static std::atomic<int> told{0};
+        if (told++ < 6) logf("vk: a capture buffer of %llu MB was refused: %s (RX_VK_CAP_GET_FALLBACK)", (unsigned long long)(cap_buf_size(need) >> 20),
+                             ok ? "a spare or the exact size took its place" : "none to take, the capture goes without");
+    }
+    return ok;
 }
 std::vector<std::pair<uint64_t, uint64_t>> cap_ranges;   // (the mirrored pools the captures take, as of the last one)
 std::mutex cap_ranges_mu;
