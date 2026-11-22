@@ -1094,11 +1094,25 @@ static int hos_short_sleep_pollers(const char *asked, int threads) {
     if (end && end != asked && *end == 0) return n > 0 ? (int)(n < 1024 ? n : 1024) : 0;
     return threads > SHORT_SLEEP_TIMER_THREADS ? threads / 4 : 0;
 }
+/* (LaküenRecomp, from HeyListen 2005df89, ported there from Longshot d10b62b3 by SadTransGirl, #1663) A yield gives up the
+   virtual core only, not the processor too (HOS_OS_YIELD=1: SwitchToThread as well, as before). The game's job system yields
+   after every job and every actor callback; on a PC of 4 cores in Castle Town's market the job threads spent about half their
+   CPU time inside SwitchToThread, handing the processor to another thread and taking it back, and their frames were ~2 %
+   shorter without it (no difference on 16 cores). hos_vcore_yield already hands the virtual core to a waiting game thread of
+   better or equal priority. Only with virtual cores on (HOS_VCORES, on by default): without them the yield is the OS's */
+static int os_yield(void) {
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HOS_OS_YIELD");
+        v = (e && e[0] && e[0] != '0') || !hos_vcores_on();
+    }
+    return v;
+}
 /* (virtual cores: a sleep gives the core up, SleepThread(0) offers it to a waiter as good) guest: the game's own sleep */
 static void sleep_away(int64_t ns, int guest) {
     if (ns <= 0) {
         hos_vcore_yield();
-        SwitchToThread();
+        if (os_yield()) SwitchToThread();
         return;
     }
     HOS_CHAIN(HOS_CHAIN_SLEEP, (uint64_t)ns);
@@ -1268,7 +1282,7 @@ HLE(_ZN2nn2os19GetCurrentStackInfoEPmS1_) {
 
 HLE(_ZN2nn2os11YieldThreadEv) {
     hos_vcore_yield();
-    SwitchToThread();
+    if (os_yield()) SwitchToThread();   /* (Longshot #1663: the virtual core only, HOS_OS_YIELD=1: as before) */
 }
 /* HOS_SLEEP_LOG=1 (diagnostic): guest sleeps by caller (LR) every 5 s: count, asked, slept */
 void hos_sleep_logged(int64_t ns, uint64_t lr) {
