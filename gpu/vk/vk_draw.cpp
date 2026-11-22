@@ -5007,12 +5007,21 @@ bool writes_sampled_target(uint16_t writes, uint16_t sampled_targets) {
 /// a pass of its own, after a full barrier (begin_pass makes it), as for the clears above: in one pass the GPU orders
 /// the targets' writes with each other only, not with the draws' texture reads of them. (A draw that samples a target
 /// it writes itself is left as it is.) Returns the targets the draw writes. RX_VK_NO_PASS_HAZARDS=1: not checked.
-uint16_t draw_hazards(VkCommandBuffer cmd, const Program& p, const NvnState& s, const Targets& at) {
+uint16_t draw_hazards(VkCommandBuffer cmd, const Program& p, const NvnState& s, const Targets& at, uint16_t& samples) {
     Pass& pass_ = pass();   // (Project ReLink #89)
     uint16_t writes = 0;
     for (int i = 0; i < at.n; i++)
         if (at.color[i] && target_write_mask(p, s, i)) writes |= (uint16_t)(1u << i);
     if (at.depth && s.ds.dw) writes |= 1u << 8;
+    // (longshot 7daafa7a, #1553) the targets this draw samples, once: colour i bit i, depth bit 8. The pass keeps them as a mask
+    // (draw(): RX_VK_PASS_SAMPLE_MASK) instead of searching a list of every texture the pass sampled for each sampled texture
+    samples = 0;
+    for (const Texture* t : gfx_sampled()) {
+        if (!t) continue;
+        for (int i = 0; i < at.n; ++i)
+            if (at.color[i] == t) samples |= (uint16_t)(1u << i);
+        if (at.depth == t) samples |= 1u << 8;
+    }
     {   // (hookshot: a draw that samples a target it writes itself reads it undefined in Vulkan (a feedback loop): named, a few times)
         static std::atomic<int> self_logged{0};
         if (self_logged.load(std::memory_order_relaxed) < 12)
@@ -5033,16 +5042,7 @@ uint16_t draw_hazards(VkCommandBuffer cmd, const Program& p, const NvnState& s, 
     bool same = pass_.depth == at.depth_view && pass_.n == at.n && pass_.width == at.width && pass_.height == at.height;
     for (int i = 0; i < at.n && same; i++) same = pass_.color[i] == at.color_view[i];
     if (!same) return writes;   // (other targets: begin_pass ends this pass with a barrier anyway)
-    auto slot_of = [&](const Texture* t) {
-        for (int i = 0; i < at.n; i++)
-            if (at.color[i] == t) return i;
-        return at.depth == t ? 8 : -1;
-    };
-    const char* kind = nullptr;
-    for (const Texture* t : gfx_sampled()) {
-        const int k = slot_of(t);
-        if (k >= 0 && (pass_.written >> k & 1) && !(writes >> k & 1)) { kind = "samples a target the pass wrote"; break; }
-    }
+    const char* kind = (samples & pass_.written & ~writes) ? "samples a target the pass wrote" : nullptr;
     if (!kind && writes_sampled_target(writes, pass_.sampled_targets))
         kind = "writes a target an earlier draw sampled";
     if (!kind) return writes;
@@ -7492,10 +7492,10 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     static const bool barrier_every = env_on("RX_VK_BARRIER_EVERY_DRAW");   // (an experiment: a pass each)
     if (barrier_every) end_pass(cmd);
     reactive_scene_draw(cmd, p, s, at);
-    uint16_t writes;
+    uint16_t writes, samples;
     {
         FINE_SCOPE(FT_HAZARD);
-        writes = draw_hazards(cmd, p, s, at);
+        writes = draw_hazards(cmd, p, s, at, samples);
     }
     BufferRef mesh_args{};
     uint32_t mesh_args_at = 0;
@@ -7580,14 +7580,25 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     gprof_run(cmd, p.key);   // (RX_VK_PASS_TIMING=2)
     pass_.prog = p.key;
     if (!pass_.first_prog) pass_.first_prog = p.key;
-    for (const Texture* t : gfx_sampled()) {
-        if (std::find(pass_.sampled.begin(), pass_.sampled.end(), t) != pass_.sampled.end()) continue;
-        pass_.sampled.push_back(t);
-        int slot = -1;
-        for (int i = 0; i < at.n; i++)
-            if (at.color[i] == t) { slot = i; break; }
-        if (slot < 0 && at.depth == t) slot = 8;
-        if (slot >= 0) pass_.sampled_targets |= (uint16_t)(1u << slot);
+    // (longshot 7daafa7a, #1553; RX_VK_PASS_SAMPLE_MASK=0: the list of every distinct texture the pass sampled, searched for each
+    // sampled texture of each draw, as before) The pass keeps the sampled targets as a mask; the list of textures is kept only for
+    // the traces that print it (RX_VK_PASS_TRACE, the pass timing's label)
+    static const bool mask_on = env_int("RX_VK_PASS_SAMPLE_MASK", 1) != 0;
+    if (mask_on) {
+        pass_.sampled_targets |= samples;
+        if (pass_trace_on() || gprof_on())
+            for (const Texture* t : gfx_sampled())
+                if (t && std::find(pass_.sampled.begin(), pass_.sampled.end(), t) == pass_.sampled.end()) pass_.sampled.push_back(t);
+    } else {
+        for (const Texture* t : gfx_sampled()) {
+            if (std::find(pass_.sampled.begin(), pass_.sampled.end(), t) != pass_.sampled.end()) continue;
+            pass_.sampled.push_back(t);
+            int slot = -1;
+            for (int i = 0; i < at.n; i++)
+                if (at.color[i] == t) { slot = i; break; }
+            if (slot < 0 && at.depth == t) slot = 8;
+            if (slot >= 0) pass_.sampled_targets |= (uint16_t)(1u << slot);
+        }
     }
     pass_.written |= writes;
     if (pl != last_pipeline) {
