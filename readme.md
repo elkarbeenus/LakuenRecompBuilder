@@ -185,6 +185,13 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   From Longshot #1814, via HeyListen. (`host/oot_ocb_hold.h`, `host/oot_ocb_hold.c`, `nx2/oot_patches.py`)
 - (v0.3.13) Capture buffers past the spares destroyed on a thread of their own (`RX_VK_CAP_FREE_ASYNC=0`: where retired).
   From Longshot #1848, via HeyListen. (`gpu/vk/vk_memory.cpp`)
+- (v0.3.14) Host: the game's yield keeps the processor (`HOS_OS_YIELD=1`: as before), a yield with nobody queued takes no
+  lock (`HOS_VC_YIELD_FAST=0`), a wake with no sleeper makes no futex call (`HOS_CV_WAKE_SKIP=0`), a freed region's discard
+  gives the virtual core up, the sync-object table's rehash reads a byte a slot (`HOS_SYNC_REHASH_OLD=1`). From Longshot
+  #1553 and #1663, upstream and Project ReLink. (`host/hos_thread.c`, `host/posix/win32_posix.c`, `host/hos_mem.c`,
+  `host/nn_os_sync.c`)
+- (v0.3.14) Emptied memory blocks freed on a thread of their own (`RX_VK_FREE_LATER=0`: on the caller's). From upstream,
+  via HeyListen. (`gpu/vk/vk_vma.cpp`)
 
 **Sound**
 
