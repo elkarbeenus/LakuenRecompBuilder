@@ -48,7 +48,7 @@ def main():
         raise SystemExit("reactive_scene_draw: the pass is ended for draws that need no copy")
     body = function(draw, "void draw(")
     if "reactive_scene_draw(cmd, p, s, at);" not in body or \
-            body.index("reactive_scene_draw(cmd, p, s, at);") > body.index("writes = draw_hazards(cmd, p, s, at);"):
+            body.index("reactive_scene_draw(cmd, p, s, at);") > body.index("writes = draw_hazards(cmd, p, s, at, samples);"):
         raise SystemExit("draw: the scene is not copied before the draw's pass is settled (draw_hazards)")
 
     reactive = (VK / "vk_reactive.cpp").read_text(encoding="utf-8")

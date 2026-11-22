@@ -121,6 +121,9 @@ int desc_reuse_level() { return 2; }   // (vk_draw.cpp: RX_VK_DESC_REUSE and the
 /* BANK_CACHE */
 std::array<std::array<BankCache, kNvnStages>, 2>& bank_cache() { static thread_local std::array<std::array<BankCache, kNvnStages>, 2> b; return b; }
 void make_dummies() {}
+static void mesh_conv_begin_recording() {}   // (RX_VK_MESH_CONV: not in this fixture)
+static bool desc_pool_keep() { return false; }   // (RX_VK_DESC_POOL_KEEP=0 here)
+constexpr uint32_t kExtraIdle = 120;
 /* BEGIN */
 #define FINE_SCOPE(...) ((void)0)
 #define FINE_N(...) ((void)0)

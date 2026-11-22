@@ -74,6 +74,9 @@ std::array<ViewFast, 1024>& view_fast() { static thread_local std::array<ViewFas
 struct BankCache { uint64_t at=0; };
 std::array<std::array<BankCache,2>,2>& bank_cache() { static std::array<std::array<BankCache,2>,2> b;return b; }
 void make_dummies() {}
+static void mesh_conv_begin_recording() {}   // (RX_VK_MESH_CONV: not in this fixture)
+static bool desc_pool_keep() { return false; }   // (RX_VK_DESC_POOL_KEEP=0 here)
+constexpr uint32_t kExtraIdle = 120;
 /* BEGIN */
 struct Use { BufferRef ref;std::vector<uint8_t> expected; };
 std::vector<Use> pending;
