@@ -2890,8 +2890,8 @@ struct Dummies {
 /// A handle word pair as the shader reads it (Eden's TexturePair: primary, optionally ORed with a secondary)
 template <class D>
 uint32_t handle_of(const NvnState& s, const Stage& st, const D& d, uint32_t k) {
-    if constexpr (requires { d.handle_program; }) {   // (read from a storage buffer: its handle program's)
-        if (d.handle_program != ~0U) return stage_handle(s, st, d.handle_program);
+    if constexpr (requires { d.handle_program; }) {   // (read from a storage buffer: its handle program's; of a table, element k's)
+        if (d.handle_program != ~0U) return stage_handle(s, st, d.handle_program, k);
     }
     const uint32_t step = 1u << d.size_shift;
     uint32_t h = stage_cbuf_word(s, st, d.cbuf_index, d.cbuf_offset + k * step);
@@ -2907,10 +2907,12 @@ uint32_t handle_of(const NvnState& s, const Stage& st, const D& d, uint32_t k) {
 }
 
 /// (Fritchii d603d98bb, HandleIsStoragePointer) The handle word of texture k is where a storage buffer of the same program
-/// keeps its 8-byte address (and the handle is not computed per draw)
+/// keeps its 8-byte address (and the handle is not computed per draw). (Lichii 282a585a) Or the translation saw the word
+/// reach the handle only as a load's address (TextureDescriptor::handle_is_pointer_word), storage buffer or not
 bool handle_is_storage_pointer(const Shader::Info& info, const Shader::TextureDescriptor& d, uint32_t k) {
     static const bool off = getenv("RX_VK_HANDLE_POINTER") && getenv("RX_VK_HANDLE_POINTER")[0] == '1';
     if (off || d.handle_program != ~0U) return false;
+    if (d.handle_is_pointer_word) return true;
     const uint32_t at = d.cbuf_offset + (k << d.size_shift);
     for (const auto& sb : info.storage_buffers_descriptors) {
         if (sb.cbuf_index != d.cbuf_index) continue;
@@ -3757,6 +3759,13 @@ void build_descriptors(const NvnState& s, const Program& p) {
             VkWriteDescriptorSet w = write(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, d.count);
             const size_t first = dw().imgs.size();
             const VkImageViewType vt = view_type(d.type);
+            // (Lichii bd0171f7) A handle table's array: the shader indexes it per pixel with an index it read itself (OoT's
+            // clustered lights: a light index from the pixel's list), and element k is table entry k's texture (that light's
+            // shadow map). The handles of all elements at once: the constant words and storage addresses the program reads
+            // are read once
+            static thread_local std::vector<uint32_t> table;
+            const bool is_table = d.handle_program != ~0U && d.count > 1;
+            if (is_table) table.resize(d.count), stage_handles(s, st, d.handle_program, d.count, table.data());
             for (uint32_t k = 0; k < d.count; k++) {
                 // (Fritchii d603d98bb) A handle word where a storage buffer of the same program keeps its address is not a
                 // handle: OoT's water samples each light's texture with a handle loaded per pixel from the light buffer, and
@@ -3769,9 +3778,9 @@ void build_descriptors(const NvnState& s, const Program& p) {
                 uint32_t handle;
                 {
                     FINE_SCOPE(FT_TEXSTORE);
-                    const bool store_ptr = (all_stages || st.vk_stage == VK_SHADER_STAGE_FRAGMENT_BIT) && handle_is_storage_pointer(info, d, k);
+                    const bool store_ptr = !is_table && (all_stages || st.vk_stage == VK_SHADER_STAGE_FRAGMENT_BIT) && handle_is_storage_pointer(info, d, k);
                     FINE_SCOPE(FT_TEXHANDLE);
-                    handle = store_ptr ? 0u : handle_of(s, st, d, k);
+                    handle = is_table ? table[k] : store_ptr ? 0u : handle_of(s, st, d, k);
                 }
                 {
                     FINE_SCOPE(FT_TEXFP);
@@ -3784,7 +3793,25 @@ void build_descriptors(const NvnState& s, const Program& p) {
                     FINE_SCOPE(FT_TEXVIEW);
                     view = handle ? texture_view_of(handle, vt, ViewUse::Sample, VK_FORMAT_UNDEFINED, &tex) : VK_NULL_HANDLE;
                 }
+                // (Lichii bd0171f7) A depth-compare sample of a colour texture is undefined and differs between vendors: a
+                // handle read from memory (an unused or stale table entry) that names one binds nothing
+                if (is_table && view && tex && d.is_depth && !is_depth_format(tex->format)) {
+                    static std::atomic<int> told{0};
+                    if (told++ < 8)
+                        logf("vk: handle table: element %u of program %016llx names texture #%u (format %d) for a depth "
+                             "comparison: bound as nothing", k, (unsigned long long)p.key, tex->id, (int)tex->format);
+                    view = VK_NULL_HANDLE, tex = nullptr;
+                }
                 upload_defer_ok = false;
+                // (Lichii bd0171f7) the shader clamps its index to the last element: a table that names a texture there may run
+                // past the array, and its lights from that index on all take this one's texture. Said once
+                if (is_table && k + 1 == d.count && view) {
+                    static std::atomic<bool> told{false};
+                    if (!told.exchange(true))
+                        logf("vk: handle table: last element %u of program %016llx names texture #%u: the table may have more "
+                             "entries than the array, and those take this texture (said once)", k, (unsigned long long)p.key,
+                             tex ? tex->id : 0);
+                }
                 if (dump_on()) dump_input('t', (uint32_t)(dw().imgs.size() - 0), handle, view ? tex : nullptr);
                 if (view && tex && trace_tex_wanted(tex)) trace_tex_hit = tex;
                 if (log_img_wanted(p.key)) {
