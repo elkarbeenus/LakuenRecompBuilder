@@ -85,20 +85,33 @@ static struct timespec rel_ms(DWORD ms) {
     struct timespec ts = {(time_t)(ms / 1000), (long)(ms % 1000) * 1000000L};
     return ts;
 }
-void WakeConditionVariable(CONDITION_VARIABLE *cv) {
-    __atomic_add_fetch(&cv->seq, 1, __ATOMIC_SEQ_CST);
-    futex(&cv->seq, FUTEX_WAKE_PRIVATE, 1, NULL);
+/* (longshot 7daafa7a, #1553) A sleeper registers (waiters) under its associated lock before it releases that lock; a wake
+   that reads none returns without the futex call, and one that reads a sleeper bumps seq first, which also covers a wake
+   between the sleeper's unlock and its entering the kernel. HOS_CV_WAKE_SKIP=0: every wake calls the futex, as before */
+static int cv_wake_skip(void) {
+    static int v = -1;
+    int on = __atomic_load_n(&v, __ATOMIC_RELAXED);
+    if (on < 0) {
+        const char *e = getenv("HOS_CV_WAKE_SKIP");
+        __atomic_store_n(&v, on = !(e && e[0] == '0' && !e[1]), __ATOMIC_RELAXED);
+    }
+    return on;
 }
-void WakeAllConditionVariable(CONDITION_VARIABLE *cv) {
+static void cv_wake(CONDITION_VARIABLE *cv, int count) {
+    if (cv_wake_skip() && !__atomic_load_n(&cv->waiters, __ATOMIC_SEQ_CST)) return;
     __atomic_add_fetch(&cv->seq, 1, __ATOMIC_SEQ_CST);
-    futex(&cv->seq, FUTEX_WAKE_PRIVATE, INT_MAX, NULL);
+    futex(&cv->seq, FUTEX_WAKE_PRIVATE, count, NULL);
 }
+void WakeConditionVariable(CONDITION_VARIABLE *cv) { cv_wake(cv, 1); }
+void WakeAllConditionVariable(CONDITION_VARIABLE *cv) { cv_wake(cv, INT_MAX); }
 static BOOL cv_wait(CONDITION_VARIABLE *cv, DWORD ms, void (*unlock)(void *), void (*relock)(void *, ULONG), void *l, ULONG flags) {
+    __atomic_add_fetch(&cv->waiters, 1, __ATOMIC_SEQ_CST);
     const uint32_t seq = __atomic_load_n(&cv->seq, __ATOMIC_SEQ_CST);
     unlock(l);
     struct timespec ts = rel_ms(ms);
     const long r = futex(&cv->seq, FUTEX_WAIT_PRIVATE, seq, ms == INFINITE ? NULL : &ts);
     const int timed_out = r == -1 && errno == ETIMEDOUT;
+    __atomic_sub_fetch(&cv->waiters, 1, __ATOMIC_SEQ_CST);
     relock(l, flags);
     if (timed_out) { last_error = ERROR_TIMEOUT; return FALSE; }
     return TRUE;
