@@ -576,26 +576,244 @@ static int watched_cv(uint64_t cv) {
     return 0;
 }
 
+/* ---- (relink) HOS_MUTEX_FAST (on unless =0): a mutex lives in a 32-bit word of the game's own MutexType, as on the console ----
+   The game locks ~3.5 million mutexes a second at the Market (~42 000 a frame), most of them its objects' own; each took a
+   lookup of the host object by address (a per-thread cache that missed one time in eight, then the shared table: 0.22 us
+   and cache misses each) and the host object's line. On the frame's serial stretches LockMutex was 14 % of the running time,
+   89 % of it from one caller (f_8027bfe0), nearly all of it in the lookup (hs bt09_prof / bt23_objs, 20/11).
+   The word (MutexType + 8, the SDK's nesting count, which the HLE never kept there: PR 83's slot too, so not with
+   HOS_MUTEX_IX) holds the owner's small id (bits 16-30), the nesting depth less one (bits 2-15) and a state (bits 0-1:
+   0 free, 1 held, 2 held with waiters). An uncontended lock or unlock is one atomic operation on memory the game touches
+   anyway; a contended one waits on the word itself (WaitOnAddress), its virtual core given up. A mutex a condition
+   variable waits with goes for good to the host object (bit 31): the signal's hand-off to the woken waiter (reserved, the
+   movie freeze of 11-07) lives there, unchanged. Initialize and Finalize clear the word. */
+/* (ReLink) HOS_OBJ_STATS=1 (diagnostic): the mutex fast path's counters every 5 s */
+static int obj_stats_on(void) {
+    static int on = -1;
+    if (on < 0) on = env_on("HOS_OBJ_STATS");
+    return on;
+}
+#define MXF_OFFSET 8
+#define MXF_SLOW 0x80000000u
+#define MXF_STATE 3u
+#define MXF_DEPTH_ONE 4u
+#define MXF_DEPTH_MASK 0xfffcu
+static int mxf_on(void) {
+    static int v = -1;
+    if (v < 0) {
+        /* (on by default since 20/11: Market +3.6 % with the replay as it is, 3 alternated pairs; +12 % with the replay
+           lifted. HOS_MUTEX_FAST=0: the host objects for every mutex, as before) */
+        const char *e = getenv("HOS_MUTEX_FAST");
+#ifdef _WIN32
+        v = !e || atoi(e) != 0;   /* (Windows: on unless HOS_MUTEX_FAST=0) */
+#else
+        v = e && atoi(e) != 0;    /* (LaküenRecomp, Linux: opt-in, HOS_MUTEX_FAST=1; the posix layer's futex WaitOnAddress) */
+#endif
+    }
+    return v;
+}
+#ifdef _WIN32
+typedef BOOL(WINAPI *WaitOnAddressFn)(volatile VOID *, PVOID, SIZE_T, DWORD);
+typedef VOID(WINAPI *WakeByAddressFn)(PVOID);
+static WaitOnAddressFn mxf_wait_fn;
+static WakeByAddressFn mxf_wake_one, mxf_wake_all;
+static int mxf_ready(void) {
+    static int r = -1;
+    if (r < 0) {
+        HMODULE k = GetModuleHandleA("kernelbase.dll");
+        mxf_wait_fn = k ? (WaitOnAddressFn)(void *)GetProcAddress(k, "WaitOnAddress") : NULL;
+        mxf_wake_one = k ? (WakeByAddressFn)(void *)GetProcAddress(k, "WakeByAddressSingle") : NULL;
+        mxf_wake_all = k ? (WakeByAddressFn)(void *)GetProcAddress(k, "WakeByAddressAll") : NULL;
+        r = mxf_wait_fn && mxf_wake_one && mxf_wake_all;
+        hos_log("nn::os mutexes: in the game's own MutexType (HOS_MUTEX_FAST)%s", r ? "" : ": WaitOnAddress missing, host objects kept");
+    }
+    return r;
+}
+#else
+/* (LaküenRecomp) Linux: the posix layer's WaitOnAddress / WakeByAddress (futexes on the word itself) */
+static BOOL (*const mxf_wait_fn)(volatile void *, void *, SIZE_T, DWORD) = WaitOnAddress;
+static void (*const mxf_wake_one)(void *) = WakeByAddressSingle;
+static void (*const mxf_wake_all)(void *) = WakeByAddressAll;
+static int mxf_ready(void) {
+    static int told;
+    if (!told) told = 1, hos_log("nn::os mutexes: in the game's own MutexType (HOS_MUTEX_FAST, futexes)");
+    return 1;
+}
+#endif
+static volatile long long mxf_n_fast, mxf_n_nest, mxf_n_contend, mxf_n_sleep, mxf_n_wake, mxf_n_slowret;
+static void mxf_stats(void) {   /* (HOS_OBJ_STATS: every 5 s) */
+    if (!obj_stats_on()) return;
+    static volatile long long last;
+    const long long now = hos_now_ns(), l = __atomic_load_n(&last, __ATOMIC_RELAXED);
+    if (now - l < 5000000000LL || !__atomic_compare_exchange_n(&last, (long long *)&l, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED) || !l)
+        return;
+    hos_log("mutex fast: in 5 s %lld free takes, %lld nested, %lld contended, %lld sleeps, %lld wakes, %lld host way",
+            __atomic_exchange_n(&mxf_n_fast, 0, __ATOMIC_RELAXED), __atomic_exchange_n(&mxf_n_nest, 0, __ATOMIC_RELAXED),
+            __atomic_exchange_n(&mxf_n_contend, 0, __ATOMIC_RELAXED), __atomic_exchange_n(&mxf_n_sleep, 0, __ATOMIC_RELAXED),
+            __atomic_exchange_n(&mxf_n_wake, 0, __ATOMIC_RELAXED), __atomic_exchange_n(&mxf_n_slowret, 0, __ATOMIC_RELAXED));
+}
+#define MXF_COUNT(x) do { if (obj_stats_on()) __atomic_add_fetch(&(x), 1, __ATOMIC_RELAXED); } while (0)
+/* A thread's small id, 1..32767, unique among the live threads: an id comes back to a free list when its thread ends
+   (hos_mxf_thread_exit, from thread_main). The first version counted on modulo 32767: a session that started that many
+   threads would have given a new thread a live one's id, and it would have taken that thread's held mutex as its own
+   nested lock. (A mutex a thread ended holding then belongs to the next thread given its id; on the console it stays held
+   for good: either way no two live threads hold it.) */
+static _Thread_local uint32_t mxf_id;
+static SRWLOCK mxf_ids_lock = SRWLOCK_INIT;
+static uint16_t mxf_free_ids[32768];
+static int mxf_nfree;
+static uint32_t mxf_next_id;
+static uint32_t mxf_self(void) {
+    if (mxf_id) return mxf_id;
+    AcquireSRWLockExclusive(&mxf_ids_lock);
+    if (mxf_nfree) mxf_id = mxf_free_ids[--mxf_nfree];
+    else if (mxf_next_id < 32767) mxf_id = ++mxf_next_id;
+    ReleaseSRWLockExclusive(&mxf_ids_lock);
+    if (!mxf_id) hos_fatal(NULL, "nn::os mutexes: 32 767 live threads (HOS_MUTEX_FAST=0: host objects)");
+    if (mxf_id == 4096) hos_log("nn::os mutexes: 4096 thread ids in use at once");
+    return mxf_id;
+}
+void hos_mxf_thread_exit(void) {
+    if (!mxf_id) return;
+    AcquireSRWLockExclusive(&mxf_ids_lock);
+    if (mxf_nfree < 32768) mxf_free_ids[mxf_nfree++] = (uint16_t)mxf_id;
+    ReleaseSRWLockExclusive(&mxf_ids_lock);
+    mxf_id = 0;
+}
+static volatile uint32_t *mxf_word(uint64_t m) { return (volatile uint32_t *)GP(m + MXF_OFFSET); }
+static int mxf_use(uint64_t m) { return m && mxf_on() && mxf_ready(); }
+/* 1: locked here; 0: the mutex is the host object's (MXF_SLOW): the caller goes the host way */
+static int mxf_lock(uint64_t m) {
+    volatile uint32_t *w = mxf_word(m);
+    const uint32_t self = mxf_self(), mine = self << 16;
+    uint32_t c = 0;
+    if (__atomic_compare_exchange_n(w, &c, mine | 1u, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) { MXF_COUNT(mxf_n_fast); mxf_stats(); return 1; }
+    if ((c & 0x7fff0000u) != mine && !(c & MXF_SLOW)) MXF_COUNT(mxf_n_contend);
+    int64_t told_at = 0;   /* (a wait of over 10 s is logged once, with the owner's id: the host way's "waiting 10 s") */
+    for (int spun = 0;;) {
+        if (c & MXF_SLOW) { MXF_COUNT(mxf_n_slowret); return 0; }
+        if ((c & 0x7fff0000u) == mine) {   /* (nested: the depth, the state bits kept) */
+            if ((c & MXF_DEPTH_MASK) == MXF_DEPTH_MASK) return 0;   /* (deeper than 16 383: never seen; the host way would be wrong too) */
+            if (__atomic_compare_exchange_n(w, &c, c + MXF_DEPTH_ONE, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) { MXF_COUNT(mxf_n_nest); return 1; }
+            continue;
+        }
+        if (c == 0) {
+            /* (a waiter takes it in state 2: others may still sleep on the word) */
+            if (__atomic_compare_exchange_n(w, &c, mine | (spun ? 2u : 1u), 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return 1;
+            continue;
+        }
+        if (!spun) {   /* (a short spin first, as the host mutexes do: most holds are short) */
+            spun = 1;
+            const int64_t end = hos_now_ns() + hos_spin_ns();
+            while (hos_now_ns() < end) {
+                for (int i = 0; i < 16; i++) YieldProcessor();
+                c = __atomic_load_n(w, __ATOMIC_RELAXED);
+                if (c == 0 || (c & MXF_SLOW)) break;
+            }
+            if (c == 0 || (c & MXF_SLOW)) { spun = 0; continue; }
+            spun = 1;
+        }
+        if ((c & MXF_STATE) != 2u) {
+            const uint32_t c2 = (c & ~MXF_STATE) | 2u;
+            if (!__atomic_compare_exchange_n(w, &c, c2, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) continue;
+            c = c2;
+        }
+        {
+            const int away = hos_vcore_away();
+            uint32_t expect = c;
+            MXF_COUNT(mxf_n_sleep);
+            mxf_wait_fn((volatile void *)w, &expect, 4, 50);   /* (50 ms at most: a lost wake costs that, never a hang) */
+            if (!told_at) told_at = hos_now_ns() + 10000000000ll;
+            else if (told_at > 0 && hos_now_ns() > told_at) {
+                HosThread *me = hos_self();
+                hos_log("mutex %#llx (fast): %s waiting 10 s; word %#x (owner id %u, this thread's %u; HOS_MUTEX_FAST=0: host objects)",
+                        (unsigned long long)m, me ? hos_thread_name(me) : "?", (unsigned)expect, (unsigned)(expect >> 16) & 0x7fffu,
+                        (unsigned)self);
+                told_at = -1;
+            }
+            if (away) hos_vcore_back();
+        }
+        c = __atomic_load_n(w, __ATOMIC_RELAXED);
+    }
+}
+/* 1: unlocked here; 0: the host way */
+static int mxf_unlock(uint64_t m) {
+    volatile uint32_t *w = mxf_word(m);
+    const uint32_t mine = mxf_self() << 16;
+    uint32_t c = __atomic_load_n(w, __ATOMIC_RELAXED);
+    for (;;) {
+        if (c & MXF_SLOW) return 0;
+        if ((c & 0x7fff0000u) != mine) return 1;   /* (not ours: ignored, as the host way ignores it) */
+        if (c & MXF_DEPTH_MASK) {
+            if (__atomic_compare_exchange_n(w, &c, c - MXF_DEPTH_ONE, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return 1;
+            continue;
+        }
+        if ((c & MXF_STATE) == 1u) {
+            if (__atomic_compare_exchange_n(w, &c, 0u, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) return 1;
+            continue;
+        }
+        __atomic_exchange_n(w, 0u, __ATOMIC_RELEASE);
+        mxf_wake_one((PVOID)w);
+        MXF_COUNT(mxf_n_wake);
+        return 1;
+    }
+}
+/* A condition variable waits with m (held by this thread): m becomes the host object's for good, held by this thread at
+   the depth the word had; the threads sleeping on the word wake and go the host way */
+static void mxf_to_host(uint64_t m, Obj *o) {
+    if (!mxf_use(m)) return;
+    volatile uint32_t *w = mxf_word(m);
+    uint32_t c = __atomic_load_n(w, __ATOMIC_ACQUIRE);
+    if (c & MXF_SLOW) return;
+    const uint32_t mine = mxf_self() << 16;
+    if ((c & 0x7fff0000u) == mine) {
+        HosThread *self = hos_self();
+        HosThread *none = NULL;
+        __atomic_compare_exchange_n(&o->owner, &none, self, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED);
+        o->count = (int)((c & MXF_DEPTH_MASK) >> 2) + 1;
+    }
+    c = __atomic_exchange_n(w, MXF_SLOW, __ATOMIC_SEQ_CST);
+    if ((c & MXF_STATE) == 2u) mxf_wake_all((PVOID)w);
+}
+
 HLE(_ZN2nn2os15InitializeMutexEPNS0_9MutexTypeEbi) {
+    if (mxf_use(ARG(0))) __atomic_store_n(mxf_word(ARG(0)), 0u, __ATOMIC_RELEASE);
     fresh(ARG(0), K_MUTEX);
     if (watched(ARG(0))) watch_log("init", ARG(0), 0, c, NULL);
 }
 HLE(_ZN2nn2os13FinalizeMutexEPNS0_9MutexTypeE) {
     if (watched(ARG(0))) watch_log("finalize", ARG(0), 0, c, NULL);
+    if (mxf_use(ARG(0))) __atomic_store_n(mxf_word(ARG(0)), 0u, __ATOMIC_RELEASE);
     drop(ARG(0));
 }
 HLE(_ZN2nn2os9LockMutexEPNS0_9MutexTypeE) {
+    if (mxf_use(ARG(0)) && !watched(ARG(0))) {
+        hos_vcore_checkpoint();
+        if (mxf_lock(ARG(0))) return;
+    }
     Obj *m = obj(ARG(0), K_MUTEX);
     if (watched(ARG(0))) watch_log("lock", ARG(0), 0, c, m);
     mutex_lock(m, ARG(0), c);
     if (watched(ARG(0))) watch_log("locked", ARG(0), 0, c, m);
 }
 HLE(_ZN2nn2os11UnlockMutexEPNS0_9MutexTypeE) {
+    if (mxf_use(ARG(0)) && !watched(ARG(0)) && mxf_unlock(ARG(0))) return;
     Obj *m = obj(ARG(0), K_MUTEX);
     if (watched(ARG(0))) watch_log("unlock", ARG(0), 0, c, m);
     mutex_unlock(m);
 }
 HLE(_ZN2nn2os12TryLockMutexEPNS0_9MutexTypeE) {
+    if (mxf_use(ARG(0)) && !watched(ARG(0))) {
+        volatile uint32_t *w = mxf_word(ARG(0));
+        const uint32_t mine = mxf_self() << 16;
+        uint32_t cw = 0;
+        if (__atomic_compare_exchange_n(w, &cw, mine | 1u, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) { RET(1); return; }
+        for (;;) {
+            if (cw & MXF_SLOW) break;
+            if ((cw & 0x7fff0000u) != mine || (cw & MXF_DEPTH_MASK) == MXF_DEPTH_MASK) { RET(0); return; }
+            if (__atomic_compare_exchange_n(w, &cw, cw + MXF_DEPTH_ONE, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) { RET(1); return; }
+        }
+    }
     Obj *m = obj(ARG(0), K_MUTEX);
     HosThread *self = hos_self();
     if (__atomic_load_n(&m->owner, __ATOMIC_RELAXED) == self) { m->count++; RET(1); return; }
@@ -605,6 +823,10 @@ HLE(_ZN2nn2os12TryLockMutexEPNS0_9MutexTypeE) {
     RET(ok);
 }
 HLE(_ZN2nn2os28IsMutexLockedByCurrentThreadEPKNS0_9MutexTypeE) {
+    if (mxf_use(ARG(0))) {
+        const uint32_t cw = __atomic_load_n(mxf_word(ARG(0)), __ATOMIC_RELAXED);
+        if (!(cw & MXF_SLOW)) { RET(cw && (cw & 0x7fff0000u) == (mxf_self() << 16)); return; }
+    }
     RET(__atomic_load_n(&obj(ARG(0), K_MUTEX)->owner, __ATOMIC_RELAXED) == hos_self());
 }
 
@@ -659,6 +881,7 @@ HLE(_ZN2nn2os21WaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTyp
         watch_log("cv wait", ARG(1), ARG(0), c, m);
     }
     cv_count_in(cv);
+    mxf_to_host(ARG(1), m);
     AcquireSRWLockExclusive(&cv->lk);
     uint64_t gen = cv->gen;
     cv_enter(cv, m);
@@ -1333,6 +1556,7 @@ HLE(_ZN2nn2os26TimedWaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9Mut
     Obj *cv = obj(ARG(0), K_COND), *m = obj(ARG(1), K_MUTEX);
     int64_t deadline = hos_now_ns() + ((int64_t)ARG(2) > 0 ? (int64_t)ARG(2) : 0);
     cv_count_in(cv);
+    mxf_to_host(ARG(1), m);
     AcquireSRWLockExclusive(&cv->lk);
     uint64_t gen = cv->gen;
     cv_enter(cv, m);

@@ -521,6 +521,8 @@ static DWORD WINAPI thread_main(void *p) {
         a64_icall(c, hook);
     }
     if (hos_trace) hos_log("thread exit");
+    void hos_mxf_thread_exit(void);
+    hos_mxf_thread_exit();   /* (nn_os_sync.c: its small id back for the fast mutexes) */
     hos_vcore_away();
     return 0;
 }
