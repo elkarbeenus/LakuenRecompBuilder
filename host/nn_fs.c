@@ -338,6 +338,7 @@ static int fs_trace(void) {
     if (on < 0) on = env_on("HOS_FS_TRACE");
     return on;
 }
+char hos_last_movie[64];   /* (relink) the name of the .webm file opened last: OpenFile below, read by host/nn_video.c */
 /* OpenFile(FileHandle*, char const* path, int mode): mode bit 0 read, bit 1 write, bit 2 append */
 HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     char path[HOS_FS_PATH];
@@ -407,6 +408,16 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     snprintf(fh->path, sizeof fh->path, "%s", g);
     G64(ARG(0)) = new_handle(fh);
     if (hos_trace || fs_trace()) hos_log("fs: OpenFile(%s)", g);
+    {   /* (relink, 0.7.9.3) the movie opened last, by its file's name: in the log (a report says which movie was playing),
+           and for host/nn_video.c, which treats the credits' movies apart (end_hold_left) */
+        const size_t n = strlen(g);
+        if (!want_write && n > 5 && !_stricmp(g + n - 5, ".webm")) {
+            const char *base = g + n;
+            while (base > g && base[-1] != '/' && base[-1] != '\\' && base[-1] != ':') base--;
+            snprintf(hos_last_movie, sizeof hos_last_movie, "%s", base);
+            hos_log("fs: movie %s", hos_last_movie);
+        }
+    }
     RET(0);
 }
 
