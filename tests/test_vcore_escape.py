@@ -61,7 +61,8 @@ static BOOL SleepConditionVariableSRW(PCONDITION_VARIABLE cv, PSRWLOCK lk, DWORD
     return 1;
 }
 static void WakeConditionVariable(PCONDITION_VARIABLE cv) { (void)cv; }
-static void AcquireSRWLockExclusive(PSRWLOCK l) { (void)l; }
+static unsigned locks;
+static void AcquireSRWLockExclusive(PSRWLOCK l) { (void)l; ++locks; }
 static void ReleaseSRWLockExclusive(PSRWLOCK l) { (void)l; }
 @STRUCT@
 static HosThread *cur;
@@ -88,6 +89,14 @@ static void escape(HosThread *t, HosThread *h0, HosThread *h1) {
 int main(void) {
     HosThread h0, h1, t, u;
     thread(&h0, "holder0", 16, 1), thread(&h1, "holder1", 16, 2), thread(&t, "waiter", 16, 3);
+
+    /* (longshot 7daafa7a, #1553; HOS_VC_YIELD_FAST) an uncontended yield: nobody queued, no kick: no scheduler lock */
+    cur = &h0;
+    hos_vcore_back();
+    const unsigned before_yield = locks;
+    hos_vcore_yield();
+    check(locks == before_yield && h0.vc_held, "an uncontended guest yield must keep its core without a scheduler lock");
+    hos_vcore_away();
 
     escape(&t, &h0, &h1);   /* a block of the escaped thread (hos_sleep_ns, hos_thread_wait, the NVN waits, ...) */
     const int away = hos_vcore_away();
