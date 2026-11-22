@@ -39,13 +39,24 @@ of HeyListen (over 1,400 conflicts). The resync is done as larger blocks ported 
 | From | Change | Switch | Shader stamp |
 |---|---|---|---|
 | HeyListen c9603f6670 (Longshot 9027e7374, SadTransGirl) | Vegetation: indirect mesh draws keep their passes, arguments converted at the game's barriers | `RX_VK_MESH_CONV` (2 default, 1 ring fill only, 0 old way) | unchanged |
+| HeyListen 97e584e325 (Longshot #107, Lichii bd0171f7 / 282a585a) | Clustered lights sample their own shadow maps (handle tables as descriptor arrays) | `RX_VK_HANDLE_TABLES=0` | **changed** (one new preparation) |
+| HeyListen 34cf894c3c (Longshot 7daafa7a) | Sampled targets as a mask; buffer without mapping destroyed | `RX_VK_PASS_SAMPLE_MASK=0`, `RX_VK_MAP_CHECK=0` | unchanged |
+| HeyListen 1a89977a81 (Longshot 7daafa7a) | Capture buffer allocated without the free-list lock, fallback to a spare | `RX_VK_CAP_GET_FALLBACK=0` | unchanged |
+| HeyListen 6ed311092b | Extra descriptor pools reset and kept (pool part only) | `RX_VK_DESC_POOL_KEEP=0` | unchanged |
+| HeyListen 7534b45c03 | A pool made gives the virtual core up | `HOS_RELEASE_KEEP_CORE=1` | unchanged |
+| ReLink f7a53665a4 and four more | Mutexes in the game's MutexType word | `HOS_MUTEX_FAST` (Windows on, Linux opt-in) | unchanged |
+| ReLink 47c5ed1c5c | Cold game code with the fast instruction selector | `RX_COLD_FAST=0` | unchanged (game code rebuilt) |
+| ReLink 7a2edb9769 | No freeze after the credits | `HOS_VIDEO_END_HOLD`, `HOS_VIDEO_UNLOCKED=1` | unchanged |
+
+Tried and left out for now: `RX_VK_CAP_RANGES_REUSE` (needs HeyListen's `RX_VK_CAP_ONLY_GPU`), `RX_VK_RETIRED_COMPACT` (our pool
+lifetime code differs), the AMD iGPU present wait (`RX_VK_WAIT_OWN`: we never had the own-frame wait it relaxes).
 
 ## What the others have that we have not (candidates)
 
 | Source | Change | Note |
 |---|---|---|
-| HeyListen 97e584e325 (after Lichii bd0171f7, 282a585a) | Clustered lights sample their own shadow maps (handle tables as descriptor arrays) | `RX_VK_HANDLE_TABLES`; changes the shader stamp (one new preparation) |
-| HeyListen | `HOS_EVENT_FAST`, `RX_VK_RETIRED_COMPACT`, `CAP_GET_FALLBACK`, `CAP_RANGES_REUSE`, `PASS_SAMPLE_MASK`, `DESC_POOL_KEEP` | not ported yet |
+| HeyListen | `HOS_EVENT_FAST`, `RX_VK_RETIRED_COMPACT`, `RX_VK_CAP_RANGES_REUSE` | not ported yet |
+| HeyListen | VRAM given back when frame generation is off (be30109d50) | candidate |
 | HeyListen | Frames in flight (`RX_VK_FRAMES_IN_FLIGHT`, off by default), native main loop (`HL_MAINLOOP`, off by default) | large, depends on their native engine |
 | HeyListen | Fixes above 60 fps | need HeyListen's hook system |
 | ReLink | Upscalers' own sharpness, detailed FPS counter | check |

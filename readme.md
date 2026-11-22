@@ -192,6 +192,23 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   `host/nn_os_sync.c`)
 - (v0.3.14) Emptied memory blocks freed on a thread of their own (`RX_VK_FREE_LATER=0`: on the caller's). From upstream,
   via HeyListen. (`gpu/vk/vk_vma.cpp`)
+- (v0.3.15) Vegetation's indirect mesh draws keep their passes, their arguments converted at the game's barriers
+  (`RX_VK_MESH_CONV`, 2; 1 the ring fill alone, 0 as before). From Longshot (SadTransGirl, #1846), via HeyListen.
+  (`gpu/vk/mesh_conv.h`, `gpu/vk/vk_draw.cpp`, `gpu/vk/vk_replay.cpp`)
+- (v0.3.15) Clustered lights sample their own shadow maps: handle tables bound as descriptor arrays
+  (`RX_VK_HANDLE_TABLES=0`: off). From Longshot #107 (pmwork-personal) and Lichii (Zortos), via HeyListen. Changes the
+  shader translation. (`gpu/vk/eden/shader_recompiler/ir_opt/texture_pass.cpp`, `gpu/vk/vk_shader.cpp`, `gpu/vk/vk_draw.cpp`)
+- (v0.3.15) A pass keeps its sampled targets as a mask (`RX_VK_PASS_SAMPLE_MASK=0`: the list), a buffer given no mapping is
+  destroyed (`RX_VK_MAP_CHECK=0`), the capture buffer is allocated without the free-list lock with a fallback
+  (`RX_VK_CAP_GET_FALLBACK=0`), the extra descriptor pools are reset and kept (`RX_VK_DESC_POOL_KEEP=0`). From Longshot
+  #1553 (HumanBean) and HeyListen. (`gpu/vk/vk_draw.cpp`, `gpu/vk/vk_memory.cpp`, `gpu/vk/vk_vma.cpp`)
+- (v0.3.15) nn::os mutexes in a word of the game's own MutexType (`HOS_MUTEX_FAST`: on on Windows, opt-in `=1` on Linux).
+  From Project ReLink. (`host/nn_os_sync.c`)
+- (v0.3.15) The cold game code built with LLVM's fast instruction selector (`RX_COLD_FAST=0`: as before). From Project
+  ReLink. (`nx2/build.py`)
+- (v0.3.15) No freeze after the credits under 60 fps or above 60 (`HOS_VIDEO_END_HOLD`, `HOS_VIDEO_UNLOCKED=1`). From
+  Project ReLink. (`host/nn_video.c`, `host/nn_vi.c`, `host/nn_fs.c`)
+- (v0.3.15) A pool made gives the virtual core up (`HOS_RELEASE_KEEP_CORE=1`: kept). From HeyListen. (`host/rx_backend.c`)
 
 **Sound**
 
