@@ -150,11 +150,12 @@ static void bury_locked(Obj *o) {
     grave_count++;
 }
 
+static int64_t rehash_ns_total, rehash_count;   /* (insert_locked's rehashes: their count and time) */
 static void insert_locked(Obj *o) {
     if (!table || used * 2 >= cap) {
         const int64_t rh_t0 = hos_now_ns();
         static int by_object = -1;   /* (HOS_SYNC_REHASH_OLD=1: liveness read from each object, as before) */
-        if (by_object < 0) by_object = getenv("HOS_SYNC_REHASH_OLD") != NULL;
+        if (by_object < 0) by_object = env_on("HOS_SYNC_REHASH_OLD");
         uint64_t ncap = cap ? cap * 2 : 1 << 16;
         Table *t = (Table *)calloc(1, sizeof(Table) + ncap * (sizeof(Obj *) + sizeof(uint64_t) + 1));
         Obj **nt = t->slot;
@@ -182,11 +183,10 @@ static void insert_locked(Obj *o) {
         cap = ncap;
         used = kept;
         __atomic_store_n(&live, t, __ATOMIC_RELEASE);
-        /* (each rehash past the first in the log: the sizes, the live objects kept, the tombstones dropped, the lock's time) */
-        if (cap > (1u << 16))
-            hos_log("sync objects: table %llu -> %llu slots (%llu live kept, %llu tombstones dropped) in %.2f ms",
-                    (unsigned long long)(cap / 2), (unsigned long long)cap, (unsigned long long)kept,
-                    (unsigned long long)(old_used - kept), (hos_now_ns() - rh_t0) / 1e6);
+        /* (LaküenRecomp: no log line here, WaitAny's scan reaches this under mw_lock and a log is a scheduling point
+           (tests/test_multiwait_wake.py); the rehash's time is kept for the counters instead) */
+        rehash_ns_total += hos_now_ns() - rh_t0, rehash_count++;
+        (void)old_used;
     }
     uint64_t i = slot_of(o->key, cap);
     while (table[i] && table_alive[i]) i = (i + 1) & (cap - 1);

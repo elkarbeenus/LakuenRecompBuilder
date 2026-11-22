@@ -115,6 +115,7 @@ static DWORD WaitForSingleObject(HANDLE h, DWORD ms) {
 }
 static void hos_log(const char *fmt, ...) { (void)fmt; logged++; }
 static void hos_vcore_yield(void) { core_yields++; }
+static int os_yield(void) { return 1; }   /* (LaküenRecomp, HOS_OS_YIELD: the fixture keeps SwitchToThread) */
 static int hos_vcore_away(void) { aways++; return 1; }
 static void hos_vcore_back(void) { backs++; }
 static void sleep_ns(int64_t ns, int guest);
