@@ -97,6 +97,7 @@ static uint64_t watch_cvs[8];
 static int watched(uint64_t m) { (void)m; return 0; }
 static int watched_cv(uint64_t cv) { (void)cv; return 0; }
 static uint64_t watch_mutex(void) { return 0; }
+static void mxf_to_host(uint64_t m, Obj *o) { (void)m, (void)o; }   /* (HOS_MUTEX_FAST: off here) */
 typedef struct { uint64_t x[8]; } Ctx;
 static void watch_log(const char *w, uint64_t m, uint64_t cv, Ctx *c, Obj *o) { (void)w, (void)m, (void)cv, (void)c, (void)o; }
 enum { HOS_CHAIN_WAIT = 1, HOS_CHAIN_WOKE, HOS_CHAIN_SIGNAL };

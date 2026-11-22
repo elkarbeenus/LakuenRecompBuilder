@@ -60,6 +60,7 @@ typedef struct { uint64_t x[32]; } Ctx;
 #define G32(a) (*(uint32_t *)GP(a))
 #define HOS_WRITTEN(p, n) ((void)0)
 static LONG64 InterlockedCompareExchange64(volatile LONG64 *p, LONG64 x, LONG64 cmp) { (void)x, (void)cmp; return *p; }
+static LONG64 InterlockedExchange64(volatile LONG64 *p, LONG64 x) { const LONG64 o = *p; *p = x; return o; }
 static int video_log(void) { return 0; }
 static void hos_log(const char *f, ...) { (void)f; }
 static int64_t clock_ns = 1000000000;
@@ -198,7 +199,9 @@ def main():
                        through(src, "typedef void (*mf_av1_picture_fn)", "int64_t pts);"),
                        through(src, "typedef struct {\n    const char *name;", "} Av1Decoder;"),
                        through(src, "typedef struct {\n    AVCodecContext *ctx;", "} Dec;"),
-                       "static volatile LONG64 submissions;"))
+                       "static volatile LONG64 submissions;",
+                       "char hos_last_movie[64];",   # (nn_fs.c: the movie file opened last)
+                       through(src, "static volatile LONG64 last_acquire_ns;", "static int end_hold_left(const Dec *d)")))
     fixture = HARNESS.replace("@TYPES@", types).replace("@ACQUIRE@", block(src, "static void dec_acquire(Ctx *c) {"))
     compiler = shutil.which(args.cxx)
     if not compiler:

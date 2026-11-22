@@ -880,8 +880,8 @@ HLE(_ZN2nn2os21WaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTyp
         if (i < 8) watch_cvs[i] = ARG(0);
         watch_log("cv wait", ARG(1), ARG(0), c, m);
     }
+    mxf_to_host(ARG(1), m);   /* (HOS_MUTEX_FAST: the mutex a condition variable waits with goes to its host object) */
     cv_count_in(cv);
-    mxf_to_host(ARG(1), m);
     AcquireSRWLockExclusive(&cv->lk);
     uint64_t gen = cv->gen;
     cv_enter(cv, m);
@@ -1555,8 +1555,8 @@ HLE(_ZN2nn2os17TryWaitTimerEventEPNS0_14TimerEventTypeE) {
 HLE(_ZN2nn2os26TimedWaitConditionVariableEPNS0_21ConditionVariableTypeEPNS0_9MutexTypeENS_8TimeSpanE) {
     Obj *cv = obj(ARG(0), K_COND), *m = obj(ARG(1), K_MUTEX);
     int64_t deadline = hos_now_ns() + ((int64_t)ARG(2) > 0 ? (int64_t)ARG(2) : 0);
+    mxf_to_host(ARG(1), m);   /* (HOS_MUTEX_FAST: the mutex a condition variable waits with goes to its host object) */
     cv_count_in(cv);
-    mxf_to_host(ARG(1), m);
     AcquireSRWLockExclusive(&cv->lk);
     uint64_t gen = cv->gen;
     cv_enter(cv, m);
