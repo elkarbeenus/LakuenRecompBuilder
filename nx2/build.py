@@ -1175,8 +1175,12 @@ def main():
         # new profile kept the hot code built from the old one)
         with open(PGO, "rb") as f:
             hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DHOOKSHOT_PROFILE_SHA1=" + hashlib.sha1(f.read(), usedforsecurity=False).hexdigest()[:16]]
+    # (ReLink 47c5ed1c5c, 20/11) the cold game code (code_*.c outside the hot pieces, 68 % of a full build's CPU) with LLVM's fast
+    # instruction selector and no machine scheduler: 13-15 % less build time on each part, the program ~40 MB larger; the cold
+    # code is ~15 % of the lifted code's running time, frame rate unchanged within the bench's noise. RX_COLD_FAST=0: as before
+    cold_fl = fl + (["-mllvm", "-fast-isel", "-mllvm", "-enable-misched=false"] if os.environ.get("RX_COLD_FAST") != "0" else [])
     jobs = [(cc, s, os.path.join(obj_dir, os.path.basename(s)[:-2] + ".o"),
-             hot_fl if os.path.basename(s).startswith("code_hot") else fl,
+             hot_fl if os.path.basename(s).startswith("code_hot") else cold_fl if os.path.basename(s).startswith("code_") else fl,
              shim_deps if os.path.dirname(s) == NX2_RT else deps) for s in srcs]
     if KEPT:   # (the kept translation is used only as it was: the same flags and headers, and every object still cached)
         stale = [os.path.basename(j[1]) for j in jobs if j[1] in KEPT and not os.path.exists(j[1]) and
