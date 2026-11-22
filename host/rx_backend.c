@@ -5,6 +5,9 @@
 #include "hos.h"
 #include <stdlib.h>
 #include <string.h>
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -582,6 +585,14 @@ void rx_nvn_vmap_changing(uint64_t gpu, uint64_t size) {
     if (vk && vk->nvn_vmap_changing) vk->nvn_vmap_changing(gpu, size);
     if (away) hos_vcore_back();
 }
+/* (HeyListen 7534b45c03) A pool made takes the back end's pool locks, which an import or a replay in progress holds: a boot thread
+   sat in a futex inside the renderer for 165 s holding its virtual core on Linux (HeyListen issue 88; every other game thread "ran
+   without a core after 2000 ms"). The core is given up for it. HOS_RELEASE_KEEP_CORE=1: kept, as before */
 void rx_nvn_pool_created(uint64_t gpu, uint64_t size) {
-    if (vk && vk->nvn_pool_created) vk->nvn_pool_created(gpu, size);
+    if (!vk || !vk->nvn_pool_created) return;
+    static int keep = -1;
+    if (keep < 0) keep = env_on("HOS_RELEASE_KEEP_CORE");
+    const int away = keep ? 0 : hos_vcore_away();
+    vk->nvn_pool_created(gpu, size);
+    if (away) hos_vcore_back();
 }
