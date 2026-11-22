@@ -124,6 +124,9 @@ typedef struct {
     int clock_set;                   /* (hookshot) the movie's clock: the picture at clock_pts was due at clock_ns */
     int64_t clock_ns, clock_pts;
     int64_t last_pts;                /* the pts of the last picture handed out */
+    int64_t held;                    /* (relink) acquires the end was held for (the skipped pictures: skipped above) */
+    int last_slot;                   /* (relink) the buffer the last picture handed out went into */
+    int end_hold;                    /* (relink) this movie's end is held back (end_hold_left) */
     int64_t log_submits;             /* (HOS_VIDEO_LOG) submissions still to log, after a flush or the end */
     SRWLOCK lock;
 } Dec;
@@ -641,6 +644,7 @@ static void dec_flush(Ctx *c, const char *what) {
         d->eos = 0;
         d->clock_set = 0;
         d->stopped = 1;   /* (hookshot: until the next submission, dec_acquire has nothing to wait for) */
+        d->skipped = d->held = 0;
         for (int i = 0; i < MAX_SLOTS; i++) d->slot_last[i] = 0;
         ReleaseSRWLockExclusive(&d->lock);
     }
@@ -657,11 +661,38 @@ static void dec_unregister(Ctx *c) {
     if (d && (uint32_t)ARG(1) < MAX_SLOTS) d->slots[(uint32_t)ARG(1)] = 0;
     RET(0);
 }
+/* (relink, 0.7.9.3) A movie is playing: a decoder handed a picture out in the last half second. host/nn_vi.c holds the frame
+   rate to 60 meanwhile (fps_max) */
+static volatile LONG64 last_acquire_ns;
+int hos_video_playing(void) {
+    const int64_t at = InterlockedCompareExchange64(&last_acquire_ns, 0, 0);
+    return at && hos_now_ns() - at < 500000000LL;
+}
+/* (relink, 0.7.9.3, issues 156 and 157: the game frozen after the credits) The movie's end is not told before the game
+   has taken as many buffers as the movie has pictures. The game's event counts frames, one a frame drawn, and ends with
+   its movie: the credits' last event (Dm_StaffCredit_0005) lasts the movie's 7344 pictures and puts its texts and "The
+   End" at given frames. Since pictures behind the clock are skipped (dec_acquire), a PC that plays the movie under 60 fps
+   reached its end early, by as many buffers as were skipped: the event ended with the movie before its "The End" frames,
+   the text it had up stayed over the map, and the next event (Dm_StaffCredit_0007, the prompt and the button) then
+   waited for good (seen on 20/11 at 32 fps: 3619 buffers at the end; a player's log: the ending's movies at 40 to
+   53 fps). The last picture stays up for those buffers instead. Only for that movie (Dm_StaffCredit_0005.webm, by the
+   name of the movie file opened last when the movie's clock starts): the other movies' events end with their movie,
+   and theirs would only keep a still on the screen. The credits' first movie is one of those: at 48 fps its event ended
+   with it, 14807 buffers taken out of 18700 pictures, and the hold only added 75 s of its black last picture.
+   HOS_VIDEO_END_HOLD=0: as before; =1: every movie (a test) */
+extern char hos_last_movie[64];   /* host/nn_fs.c */
+static int end_hold_mode(void) {
+    static int mode = -2;
+    if (mode == -2) mode = getenv("HOS_VIDEO_END_HOLD") ? atoi(getenv("HOS_VIDEO_END_HOLD")) != 0 : -1;
+    return mode;   /* (-1: the credits' last movie) */
+}
+static int end_hold_left(const Dec *d) { return d->end_hold && d->held < d->skipped; }
 /* AcquireXDecoderOutputBuffer(u32* index, NativeSyncHandle*, decoder): the oldest picture into a free buffer */
 static void dec_acquire(Ctx *c) {
     Dec *d = (Dec *)host_of(ARG(2), DEC_MAGIC);
     if (ARG(1)) G64(ARG(1)) = 0;
     if (!d) { RET(RESULT_NO_OUTPUT); return; }
+    InterlockedExchange64(&last_acquire_ns, hos_now_ns());
     /* (the library aborts on any failure here: the hardware call waits for a picture. Up to ~100 ms for one decoded
        by another thread's submission; then a free buffer as it was, so the caller is never refused) */
     /* (hookshot, #1929) and no virtual core held through it: the decoding blocks (dav1d waits for its own frame
@@ -696,12 +727,30 @@ static void dec_acquire(Ctx *c) {
     d->acquires++;
     if (!d->qn) {   /* (nothing decoded: the buffer's last picture again; after the last submission, as the last) */
         d->busy[slot] = 1;
-        if (d->eos) d->slot_last[slot] = 1, d->slot_pts[slot] = d->last_pts;   /* (the end at the last picture's time) */
+        /* (relink, 0.7.9.3: the end held back, see end_hold_left) */
+        const int hold = d->eos && end_hold_left(d);
+        if (hold) {   /* (the movie's last picture into this buffer too: the two buffers take turns on the screen) */
+            d->held++;
+            Pool *o = (Pool *)host_of(d->slots[slot], POOL_MAGIC);
+            const Pool *s = d->last_slot >= 0 && d->last_slot != slot ? (const Pool *)host_of(d->slots[d->last_slot], POOL_MAGIC) : NULL;
+            if (o && s && o->w == s->w && o->h == s->h && o->nv12 && s->nv12) {
+                memcpy(o->nv12, s->nv12, (size_t)o->w * o->h * 3 / 2);
+                if (o->rgba && s->rgba && !s->rgba_stale) memcpy(o->rgba, s->rgba, (size_t)o->w * o->h * 4);
+                o->rgba_stale = s->rgba_stale || !o->rgba || !s->rgba;
+                if (o->mem && s->mem && o->mem_size && o->mem_size == s->mem_size && !o->read_by_api) {
+                    memcpy(GP(o->mem), GP(s->mem), o->mem_size);
+                    HOS_WRITTEN(GP(o->mem), o->mem_size);
+                }
+            }
+            d->slot_pts[slot] = d->last_pts;
+        }
+        if (d->eos && !hold) d->slot_last[slot] = 1, d->slot_pts[slot] = d->last_pts;   /* (the end at the last picture's time) */
         const int idle = !d->eos && !d->phead;   /* (nothing will come into this buffer: its sync is not reached) */
         if (idle && ARG(1))
             G64(ARG(1)) = SYNC_IDLE_TAG | ((uint64_t)InterlockedCompareExchange64(&submissions, 0, 0) & SYNC_IDLE_MASK);
+        if (hold && d->held == d->skipped) hos_log("video: the movie's end told after %lld frames held", (long long)d->held);
         if (video_log()) hos_log("video: acquire %lld: nothing decoded%s, buffer %d again", (long long)d->acquires,
-                                 d->eos ? " (the end)" : idle ? " (idle: its sync not reached)" : "", slot);
+                                 hold ? " (the end, held)" : d->eos ? " (the end)" : idle ? " (idle: its sync not reached)" : "", slot);
         else if (d->acquires == 1 && !d->eos)   /* (the start: the frame shows the buffer as it was, black since the pool's fill) */
             hos_log("video: the first buffer went out before the first picture was decoded (shown black)");
         ReleaseSRWLockExclusive(&d->lock);
@@ -717,7 +766,10 @@ static void dec_acquire(Ctx *c) {
         if (off < 0) off = env_on("HOS_VIDEO_NO_CATCHUP");
         const int64_t now = hos_now_ns(), late = 25000000;   /* (a frame and a half at 60 fps) */
         Picture *h = &d->queue[d->qhead];
-        if (!d->clock_set || h->pts < d->clock_pts) d->clock_set = 1, d->clock_ns = now, d->clock_pts = h->pts;   /* (a start, a loop) */
+        if (!d->clock_set || h->pts < d->clock_pts) {   /* (a start, a loop) */
+            d->clock_set = 1, d->clock_ns = now, d->clock_pts = h->pts, d->skipped = d->held = 0;
+            d->end_hold = end_hold_mode() >= 0 ? end_hold_mode() : strstr(hos_last_movie, "Dm_StaffCredit_0005") != NULL;
+        }
         int skipped = 0;
         for (int guard = 0; !off && guard < 600 && !d->queue[d->qhead].last; guard++) {
             const int64_t due = d->clock_pts + (now - d->clock_ns);
@@ -763,7 +815,11 @@ static void dec_acquire(Ctx *c) {
         }
     }
     d->slot_pts[slot] = d->last_pts = p->pts;
-    d->slot_last[slot] = p->last;
+    d->last_slot = slot;
+    d->slot_last[slot] = p->last && !end_hold_left(d);   /* (the end told later, by a buffer of the branch above) */
+    if (p->last && end_hold_left(d))
+        hos_log("video: the movie's end held back for the %lld frames its skipped pictures made it short by (%lld taken)",
+                (long long)(d->skipped - d->held), (long long)d->acquires);
     d->busy[slot] = 1;
     {   /* (hookshot) HOS_VIDEO_LOG: the picture's time against this decoder's movie clock, to see it fall behind the sound */
         if (video_log() && d->acquires % 60 == 0) {

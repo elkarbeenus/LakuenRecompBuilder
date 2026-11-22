@@ -132,6 +132,14 @@ static int fps_max(void) {
         if (v == FPS_UNCAPPED) hos_log("vi: frame rate uncapped: pacing, the game's limiter and its time step follow the frames");
         else if (v != 60) hos_log("vi: frame rate cap %d: pacing, the game's limiter and its time step follow it", v);
     }
+    {   /* (ReLink 7a2edb9769) 60 while a movie plays. The game's events count a movie in frames, one a frame drawn: at 120 fps
+           the credits' last event reached its end in half the movie's time, put the last text over the wrong picture and left a
+           black screen after the button. The movies are 60 fps pictures: nothing is lost. HOS_VIDEO_UNLOCKED=1: as before */
+        static int video_unlocked = -1;
+        if (video_unlocked < 0) video_unlocked = env_on("HOS_VIDEO_UNLOCKED");
+        int hos_video_playing(void);
+        if (v > 60 && !video_unlocked && hos_video_playing()) return 60;
+    }
     return v;
 }
 static int64_t next_frame_at, window_start, frames_in_window;
@@ -164,6 +172,12 @@ void hos_vi_native_acquire(int active) {
     static int no_pacing = -1, double_buffered = -1;
     if (no_pacing < 0) no_pacing = env_on("HOS_NO_PACING");
     if (double_buffered < 0) double_buffered = env_on("HOS_VI_DOUBLE");
+    {   /* (a test) HOS_TEST_SLOW_MS=<ms>: each frame's acquire held that much longer, as on a PC that cannot hold the frame
+           rate (two players' endings hung with the movies at 40 to 53 fps) */
+        static int64_t slow_ns = -1;
+        if (slow_ns < 0) slow_ns = getenv("HOS_TEST_SLOW_MS") ? (int64_t)(atof(getenv("HOS_TEST_SLOW_MS")) * 1e6) : 0;
+        if (slow_ns > 0) hos_sleep_ns(slow_ns);
+    }
     if (no_pacing || !next_frame_at) return;
     int64_t until = next_frame_at;
     if (!double_buffered && active >= 2) {
