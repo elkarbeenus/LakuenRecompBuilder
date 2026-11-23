@@ -3441,7 +3441,7 @@ bool table_track_open(int logged, int seen, int unlimited) {
 
 // (LaküenRecomp, from HeyListen 33873659 / upstream 53eb0441, pixl27, RX_VK_METER_ZERO) where an exposure program's sums were
 // bound, for its dispatch's reset
-struct MeterOut { VkBuffer buffer = VK_NULL_HANDLE; VkDeviceSize offset = 0, size = 0; };
+struct MeterOut { VkBuffer buffer = VK_NULL_HANDLE; VkDeviceSize offset = 0, size = 0; uint64_t guest = 0; };
 thread_local MeterOut meter_out;
 static bool meter_program(uint64_t key) { return key == 0x435a0138b9013040ull || key == 0x592079442d7129daull; }
 void build_descriptors(const NvnState& s, const Program& p) {
@@ -3613,7 +3613,7 @@ void build_descriptors(const NvnState& s, const Program& p) {
                 // (LaküenRecomp, from upstream 53eb0441) the exposure meter: where its two programs bind their block
                 if (meter_program(p.key) && d.is_written && b && n == 0x1040) {
                     memory_meter_range(host->gpu_guest(base), n);
-                    meter_out = {b.buffer, b.offset + (addr - base), n - (addr - base)};
+                    meter_out = {b.buffer, b.offset + (addr - base), n - (addr - base), host->gpu_guest(base)};
                 }
                 // (census: every single descriptor, and table entries that hold something, with where they came from)
                 if (d.count == 1 || addr) {
@@ -9617,11 +9617,16 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
         logf("vk: %lld dispatches right after another ordered by the game's barriers so far, with none of their own (RX_VK_GAME_ORDER)",
              (long long)st_dispatch_unordered);
     work_since_barrier = true;
+    // (RX_VK_METER_HOLD: the block is written. RX_VK_METER_ZERO=2, to try: cleared only at the first dispatch after the game's
+    // read, so a second dispatch into the block before the next read adds to the first's sums, as on the console)
+    const uint32_t meter_before = meter_program(p.key) && meter_out.guest ? memory_meter_dispatched(meter_out.guest) : 0;
+    static const bool meter_zero_once = env_int("RX_VK_METER_ZERO", 1) == 2;
     {   // (LaküenRecomp, from HeyListen 33873659 / upstream 53eb0441, pixl27; RX_VK_METER_ZERO=0 turns it off) the exposure meter:
         // its two programs add a frame's sums into the first 16 bytes of their block, which the game reads and sets back to zero.
         // With the game ahead of the GPU its zeros reach the mirror late, or a write-back lands over them first and the old sums
         // come back: the next frame's are added on top (twice the light). Cleared here right before each program
-        if (meter_zero_on() && meter_program(p.key) && meter_out.buffer && meter_out.size >= 16 && !(meter_out.offset & 3)) {
+        if (meter_zero_on() && meter_program(p.key) && meter_out.buffer && meter_out.size >= 16 && !(meter_out.offset & 3) &&
+            !(meter_zero_once && meter_before)) {
             static std::atomic<int64_t> st_zeroed{0};
             full_barrier(cmd);
             vkCmdFillBuffer(cmd, meter_out.buffer, meter_out.offset, 16, 0);

@@ -291,6 +291,11 @@ inline bool meter_hold_on() {
 /// the block's start, noted where the meter's programs bind it (vk_draw.cpp), and whether guest is one (vk_replay.cpp invalidate)
 void memory_meter_range(uint64_t guest, uint64_t size);
 bool memory_is_meter(uint64_t guest);
+/// (LaküenRecomp) a meter program's dispatch into the block at guest was recorded; and, at the game's read of a block, whether
+/// one was recorded within the last few reads (RX_VK_METER_HOLD: a block no program writes any more reads its zeros, as on the
+/// console, instead of an older area's last sums)
+uint32_t memory_meter_dispatched(uint64_t guest);   // (the dispatches into it since the game's last read, before this one)
+bool memory_meter_read(uint64_t guest);
 /// (vk_replay.cpp) The GPU's progress on the recordings' timeline, and a wait for it to reach v
 uint64_t vk_timeline_completed();
 /// A future submission completion covering images retired during replay; zero: no safe value.

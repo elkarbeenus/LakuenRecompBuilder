@@ -3039,6 +3039,46 @@ void memory_meter_range(uint64_t guest, uint64_t size) {
     if (meter_bases.size() > 64) meter_bases.clear();
     meter_bases.emplace(guest, 1);
 }
+// (LaküenRecomp) The meter's blocks as the game reads them. HeyListen's map of the meter (docs/native-engine/exposure.md, 21/11):
+// the game reads three blocks every frame, but each is written only where its program runs: in the Market only 435a0138b9013040
+// (block B), in Kakariko and the Lost Woods also 592079442d7129da (block A), block C by neither. A block whose program does not
+// run reads the game's own zeros on the console. RX_VK_METER_HOLD gave every zero read the block's last sums again, also where
+// its program had stopped: an area entered from one where it ran kept that area's light reading for good (the exposure set for
+// a brighter or darker place: a white haze in some areas and rooms). A zero read is held now only while the block's program was
+// recorded within the last kMeterRecent reads (a result on its way, the replay behind the game). RX_VK_METER_HOLD=2: every zero
+// read held, as before. Logged every 2000 reads: dispatches between reads, reads with none
+namespace {
+struct MeterUse { uint32_t dispatched = 0, reads_since = 1u << 30; };
+std::unordered_map<uint64_t, MeterUse> meter_use;
+constexpr uint32_t kMeterRecent = 8;
+int64_t st_meter_reads = 0, st_meter_disp = 0, st_meter_none = 0, st_meter_max = 0;
+}
+uint32_t memory_meter_dispatched(uint64_t guest) {
+    if (!guest) return 0;
+    std::lock_guard lk(meter_mu);
+    if (meter_use.size() > 64) meter_use.clear();
+    MeterUse& u = meter_use[guest];
+    u.reads_since = 0;
+    return u.dispatched++;
+}
+bool memory_meter_read(uint64_t guest) {
+    static const bool always = env_int("RX_VK_METER_HOLD", 1) == 2;
+    std::lock_guard lk(meter_mu);
+    MeterUse& u = meter_use[guest];
+    st_meter_reads++, st_meter_disp += u.dispatched;
+    if (!u.dispatched) st_meter_none++;
+    st_meter_max = std::max<int64_t>(st_meter_max, u.dispatched);
+    if (st_meter_reads % 2000 == 0) {
+        logf("vk: exposure blocks: 2000 reads, %.2f dispatches between reads (at most %lld), %lld reads with none since the last "
+             "(RX_VK_METER_HOLD%s)", st_meter_disp / 2000.0, (long long)st_meter_max, (long long)st_meter_none,
+             always ? "=2: every zero read held" : ": zeros held only while the program runs");
+        st_meter_disp = st_meter_none = st_meter_max = 0;
+    }
+    u.dispatched = 0;
+    const bool recent = u.reads_since < kMeterRecent;
+    if (u.reads_since < (1u << 30)) u.reads_since++;
+    return always || recent;
+}
 // ---- (from PR 430, YunaraDebugs) Readback pages: GPU results the CPU reads (invalidate) and then writes, as OoT's exposure meter (a
 // sum the GPU adds into each frame; the CPU reads it and stores 0 back). On the console the GPU adds into that memory as it is when
 // its work runs, the CPU's 0 included. Here it adds into the pool's mirror, which takes the CPU's 0 only at a mirror sync of a submit
