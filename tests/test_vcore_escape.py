@@ -52,6 +52,11 @@ enum { HOS_CHAIN_WAIT = 1, HOS_CHAIN_WOKE, HOS_CHAIN_SIGNAL, HOS_CHAIN_SLEEP, HO
 static int escapes_logged;
 static void hos_log(const char *fmt, ...) { if (strstr(fmt, "ran without a core")) escapes_logged++; }
 static int hos_cores(void) { return 2; }
+/* (HOS_BG_CAP's auto reading of the host's cores: none read here, so no cap) */
+typedef struct { int Relationship; } SYSTEM_LOGICAL_PROCESSOR_INFORMATION;
+enum { RelationProcessorCore = 0 };
+static BOOL GetLogicalProcessorInformation(SYSTEM_LOGICAL_PROCESSOR_INFORMATION *i, DWORD *len) { (void)i, (void)len; return 0; }
+static uint64_t hos_reserved_cpus(void) { return 0; }
 static int sleeps;
 /* (no other thread runs here: a wait for a core only lets the clock go on, 1 ms a look, as the real one times out) */
 static BOOL SleepConditionVariableSRW(PCONDITION_VARIABLE cv, PSRWLOCK lk, DWORD ms, unsigned long f) {
