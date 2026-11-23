@@ -58,6 +58,7 @@ typedef struct { uint64_t x[32]; } Ctx;
 #define HOS_FS_PATH 1024
 #define R_PATH_NOT_FOUND 0x202
 static int hos_trace;
+char hos_last_movie[64];   /* (nn_fs.c: the movie file opened last) */
 static int fs_trace(void) { return 0; }
 static void hos_log(const char *f, ...) { (void)f; }
 static const char *gstr(uint64_t a) { return (const char *)(uintptr_t)a; }
