@@ -494,7 +494,11 @@ void rx_nvn_program_created(const nvn_prog *p) {
 }
 void rx_nvn_read_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst,
                         size_t row, size_t img) {
+    /* (Project ReLink 0.7.9.4) The read waits for the GPU (the replay up to the texture's last writer, then a finish): another
+       guest thread may use this core meanwhile, as in rx_nvn_invalidate */
+    const int away = hos_vcore_away();
     vk ? vk->nvn_read_texels(t, level, layer0, r, dst, row, img) : wgr_nvn_read_texels(t, level, layer0, r, dst, row, img);
+    if (away) hos_vcore_back();
 }
 void rx_nvn_write_texels(const nvn_tex *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, const uint8_t *src,
                          size_t row, size_t img) {
@@ -516,8 +520,10 @@ void rx_nvn_write_texels(const nvn_tex *t, unsigned level, unsigned layer0, cons
             }
         }
     }
+    const int away = hos_vcore_away();   /* (Project ReLink 0.7.9.4: the write waits for the GPU too, as a read) */
     vk ? vk->nvn_write_texels(t, level, layer0, r, src, row, img)
        : wgr_nvn_write_texels(t, level, layer0, r, src, row, img);
+    if (away) hos_vcore_back();
 }
 void rx_nvn_invalidate(uint64_t gpu, uint64_t size) {
     /* The callback can wait for replay or GPU write-back: let another guest thread use this core meanwhile. */

@@ -9005,6 +9005,18 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
     } else {
         for (std::thread& t : threads) t.join();
         compute_counts();
+        // (Project ReLink 0.7.9.4) The compute programs' shader modules, once their pipelines are made: nothing builds from them
+        // again (a dispatch looks for the pipeline first), and the driver keeps each one's code, ~4000 of them made of ~300 MB of
+        // SPIR-V: 0.3-0.6 GB less committed. A program whose pipeline failed keeps its module. RX_VK_KEEP_MODULES=1: kept
+        if (!env_on("RX_VK_KEEP_MODULES")) {
+            size_t gone = 0;
+            for (Program* p : pre->computes)
+                if (p && p->compute_pipeline && !taau_key(p->key))
+                    for (Stage& st : p->stages)
+                        if (st.module) vkDestroyShaderModule(dev.device, st.module, nullptr), st.module = VK_NULL_HANDLE, gone++;
+            logf("vk: precompile: %zu shader modules of compute programs let go, their pipelines made (RX_VK_KEEP_MODULES=1: kept)",
+                 gone);
+        }
     }
     logf("vk: precompile: %zu programs, %zu graphics and %zu compute pipelines, %zu mesh fallback programs in %.0f ms (%.0f ms "
          "of it the caches opened, the notes and programs read)", programs_n, graphics_n, computes_n, fallbacks_n,
