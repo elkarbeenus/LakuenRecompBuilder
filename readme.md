@@ -192,6 +192,16 @@ New behaviour can be switched off with an environment variable (put it in `hooks
   `host/nn_os_sync.c`)
 - (v0.3.14) Emptied memory blocks freed on a thread of their own (`RX_VK_FREE_LATER=0`: on the caller's). From upstream,
   via HeyListen. (`gpu/vk/vk_vma.cpp`)
+- (v0.3.16) Background threads take a virtual core only while fewer than the cap are held (`HOS_BG_CAP=auto`, `=0`: no
+  limit). From Project ReLink (pixl27), via HeyListen. (`host/hos_thread.c`)
+- (v0.3.16) Compute programs' shader modules let go after the preparation (`RX_VK_KEEP_MODULES=1`: kept); texel reads and
+  writes give the virtual core up. From Project ReLink (pixl27). (`gpu/vk/vk_draw.cpp`, `host/rx_backend.c`)
+- (v0.3.16) No freeze after the credits (`HOS_VIDEO_END_HOLD`, `HOS_VIDEO_UNLOCKED=1`). From Project ReLink (pixl27).
+  (`host/nn_video.c`, `host/nn_vi.c`, `host/nn_fs.c`)
+- (v0.3.16) A memory pool made gives the virtual core up (`HOS_RELEASE_KEEP_CORE=1`: kept). From HeyListen.
+  (`host/rx_backend.c`)
+- (v0.3.16) The exposure meter's map (which program writes which block) from HeyListen's research; on it our own rule that a
+  zero read is held only while the block's program runs (`RX_VK_METER_HOLD=2`: as before). (`gpu/vk/vk_memory.cpp`)
 
 **Sound**
 
